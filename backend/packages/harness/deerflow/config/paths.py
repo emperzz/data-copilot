@@ -16,6 +16,7 @@ class Paths:
     Directory layout (host side):
         {base_dir}/
         ├── memory.json
+        ├── dw_catalog.db   <-- warehouse metadata (SQLite)
         ├── USER.md          <-- global user profile (injected into all agents)
         ├── agents/
         │   └── {agent_name}/
@@ -73,6 +74,11 @@ class Paths:
     def memory_file(self) -> Path:
         """Path to the persisted memory file: `{base_dir}/memory.json`."""
         return self.base_dir / "memory.json"
+
+    @property
+    def dw_catalog_db(self) -> Path:
+        """Path to the data warehouse catalog SQLite DB: `{base_dir}/dw_catalog.db`."""
+        return self.base_dir / "dw_catalog.db"
 
     @property
     def user_md_file(self) -> Path:
