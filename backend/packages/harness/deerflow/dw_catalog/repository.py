@@ -1,4 +1,4 @@
-"""SQLite persistence for ``dw_sql_ingest``, ``dw_sql_statement``, and ``dw_table``."""
+"""SQLite persistence for ``dw_sql_ingest``, ``dw_sql_statement``, ``dw_table``, and history logs."""
 
 from __future__ import annotations
 
@@ -17,7 +17,10 @@ from deerflow.dw_catalog.models import (
     DwSqlStatementCreate,
     DwTable,
     DwTableCreate,
+    DwTableStatementLog,
+    DwTableStatementLogCreate,
     SqlPurpose,
+    infer_sql_purpose_from_kind,
 )
 from deerflow.dw_catalog.normalize import normalize_sql_identifier
 from deerflow.sql.metadata import parse_sql_metadata
@@ -43,14 +46,11 @@ _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS dw_sql_ingest (
   id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
-  source_type TEXT NOT NULL,
   thread_id TEXT,
-  source_path TEXT,
   source_dialect TEXT,
   sql_hash TEXT NOT NULL,
   sql_text TEXT,
-  extra_json TEXT,
-  sql_purpose TEXT NOT NULL DEFAULT 'unknown'
+  extra_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_dw_sql_ingest_sql_hash ON dw_sql_ingest(sql_hash);
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS dw_sql_statement (
   statement_index INTEGER NOT NULL,
   kind TEXT,
   raw_json TEXT NOT NULL,
+  sql_purpose TEXT NOT NULL DEFAULT 'unknown',
   created_at TEXT NOT NULL,
   UNIQUE (ingest_id, statement_index)
 );
@@ -70,18 +71,27 @@ CREATE INDEX IF NOT EXISTS ix_dw_sql_statement_ingest ON dw_sql_statement(ingest
 CREATE TABLE IF NOT EXISTS dw_table (
   id TEXT PRIMARY KEY,
   catalog TEXT,
-  db TEXT,
+  db TEXT NOT NULL DEFAULT '',
   table_name TEXT NOT NULL,
-  catalog_norm TEXT NOT NULL DEFAULT '',
-  db_norm TEXT NOT NULL DEFAULT '',
-  table_name_norm TEXT NOT NULL,
   description TEXT,
+  latest_statement_id TEXT REFERENCES dw_sql_statement(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE (catalog_norm, db_norm, table_name_norm)
+  UNIQUE (catalog, db, table_name)
 );
 
-CREATE INDEX IF NOT EXISTS ix_dw_table_db_norm ON dw_table(db_norm);
+CREATE INDEX IF NOT EXISTS ix_dw_table_db ON dw_table(db);
+
+CREATE TABLE IF NOT EXISTS dw_table_statement_log (
+  id TEXT PRIMARY KEY,
+  table_id TEXT NOT NULL REFERENCES dw_table(id) ON DELETE CASCADE,
+  statement_id TEXT NOT NULL REFERENCES dw_sql_statement(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  UNIQUE (table_id, statement_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_dw_table_statement_log_table ON dw_table_statement_log(table_id);
+CREATE INDEX IF NOT EXISTS ix_dw_table_statement_log_statement ON dw_table_statement_log(statement_id);
 """
 
 
@@ -108,14 +118,11 @@ class DwCatalogRepository:
         return DwSqlIngest(
             id=row["id"],
             created_at=_dt_from_sql(row["created_at"]),
-            source_type=row["source_type"],
             thread_id=row["thread_id"],
-            source_path=row["source_path"],
             source_dialect=row["source_dialect"],
             sql_hash=row["sql_hash"],
             sql_text=row["sql_text"],
             extra_json=row["extra_json"],
-            sql_purpose=SqlPurpose(row["sql_purpose"]),
         )
 
     @staticmethod
@@ -126,6 +133,7 @@ class DwCatalogRepository:
             statement_index=row["statement_index"],
             kind=row["kind"],
             raw_json=row["raw_json"],
+            sql_purpose=SqlPurpose.coerce(row["sql_purpose"]),
             created_at=_dt_from_sql(row["created_at"]),
         )
 
@@ -136,12 +144,19 @@ class DwCatalogRepository:
             catalog=row["catalog"],
             db=row["db"],
             table_name=row["table_name"],
-            catalog_norm=row["catalog_norm"],
-            db_norm=row["db_norm"],
-            table_name_norm=row["table_name_norm"],
             description=row["description"],
+            latest_statement_id=row["latest_statement_id"],
             created_at=_dt_from_sql(row["created_at"]),
             updated_at=_dt_from_sql(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _row_to_table_statement_log(row: sqlite3.Row) -> DwTableStatementLog:
+        return DwTableStatementLog(
+            id=row["id"],
+            table_id=row["table_id"],
+            statement_id=row["statement_id"],
+            created_at=_dt_from_sql(row["created_at"]),
         )
 
     def create_ingest(self, data: DwSqlIngestCreate) -> DwSqlIngest:
@@ -152,21 +167,17 @@ class DwCatalogRepository:
             conn.execute(
                 """
                 INSERT INTO dw_sql_ingest (
-                  id, created_at, source_type, thread_id, source_path, source_dialect,
-                  sql_hash, sql_text, extra_json, sql_purpose
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  id, created_at, thread_id, source_dialect, sql_hash, sql_text, extra_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ingest_id,
                     created_iso,
-                    data.source_type,
                     data.thread_id,
-                    data.source_path,
                     data.source_dialect,
                     data.sql_hash,
                     data.sql_text,
                     data.extra_json,
-                    data.sql_purpose.value,
                 ),
             )
             conn.commit()
@@ -183,10 +194,10 @@ class DwCatalogRepository:
                 sid = str(uuid.uuid4())
                 conn.execute(
                     """
-                    INSERT INTO dw_sql_statement (id, ingest_id, statement_index, kind, raw_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO dw_sql_statement (id, ingest_id, statement_index, kind, raw_json, sql_purpose, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (sid, ingest_id, stmt.statement_index, stmt.kind, stmt.raw_json, created_iso),
+                    (sid, ingest_id, stmt.statement_index, stmt.kind, stmt.raw_json, stmt.sql_purpose.value, created_iso),
                 )
                 out.append(
                     DwSqlStatement(
@@ -195,6 +206,7 @@ class DwCatalogRepository:
                         statement_index=stmt.statement_index,
                         kind=stmt.kind,
                         raw_json=stmt.raw_json,
+                        sql_purpose=stmt.sql_purpose,
                         created_at=created,
                     )
                 )
@@ -203,9 +215,9 @@ class DwCatalogRepository:
 
     def upsert_table(self, data: DwTableCreate) -> DwTable:
         c_norm = normalize_sql_identifier(data.catalog)
-        d_norm = normalize_sql_identifier(data.db)
+        d_norm = normalize_sql_identifier(data.db) or ""
         t_norm = normalize_sql_identifier(data.table_name)
-        if not t_norm:
+        if not t_norm or not str(t_norm).strip():
             raise ValueError("table_name normalizes to empty")
 
         now_iso = _utc_now().isoformat().replace("+00:00", "Z")
@@ -214,7 +226,7 @@ class DwCatalogRepository:
             row = conn.execute(
                 """
                 SELECT id, created_at FROM dw_table
-                WHERE catalog_norm = ? AND db_norm = ? AND table_name_norm = ?
+                WHERE catalog = ? AND db = ? AND table_name = ?
                 """,
                 (c_norm, d_norm, t_norm),
             ).fetchone()
@@ -226,36 +238,34 @@ class DwCatalogRepository:
                     UPDATE dw_table SET
                       catalog = ?, db = ?, table_name = ?,
                       description = COALESCE(?, description),
+                      latest_statement_id = COALESCE(?, latest_statement_id),
                       updated_at = ?
                     WHERE id = ?
                     """,
-                    (data.catalog, data.db, data.table_name, data.description, now_iso, tid),
+                    (c_norm, d_norm, t_norm, data.description, data.latest_statement_id, now_iso, tid),
                 )
             else:
                 tid = str(uuid.uuid4())
                 conn.execute(
                     """
                     INSERT INTO dw_table (
-                      id, catalog, db, table_name, catalog_norm, db_norm, table_name_norm,
-                      description, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      id, catalog, db, table_name, description, latest_statement_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         tid,
-                        data.catalog,
-                        data.db,
-                        data.table_name,
                         c_norm,
                         d_norm,
                         t_norm,
                         data.description,
+                        data.latest_statement_id,
                         now_iso,
                         now_iso,
                     ),
                 )
             conn.commit()
 
-        table = self.get_table_by_norm(c_norm, d_norm, t_norm)
+        table = self.get_table_by_key(c_norm, d_norm, t_norm)
         assert table is not None
         return table
 
@@ -281,11 +291,11 @@ class DwCatalogRepository:
             return None
         return self._row_to_table(row)
 
-    def get_table_by_norm(self, catalog_norm: str, db_norm: str, table_name_norm: str) -> DwTable | None:
+    def get_table_by_key(self, catalog: str | None, db: str, table_name: str) -> DwTable | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM dw_table WHERE catalog_norm = ? AND db_norm = ? AND table_name_norm = ?",
-                (catalog_norm, db_norm, table_name_norm),
+                "SELECT * FROM dw_table WHERE catalog = ? AND db = ? AND table_name = ?",
+                (normalize_sql_identifier(catalog), normalize_sql_identifier(db) or "", normalize_sql_identifier(table_name)),
             ).fetchone()
         if row is None:
             return None
@@ -295,14 +305,11 @@ class DwCatalogRepository:
         self,
         sql: str,
         *,
-        source_type: str,
-        sql_purpose: SqlPurpose = SqlPurpose.UNKNOWN,
         source_dialect: str | None = None,
         thread_id: str | None = None,
-        source_path: str | None = None,
         extra_json: str | None = None,
     ) -> tuple[DwSqlIngest, list[DwSqlStatement], list[DwTable]]:
-        """Parse SQL, persist ingest + statements, upsert referenced physical tables."""
+        """Parse SQL, persist ingest + statements, upsert referenced physical tables, and write history logs."""
         payload = parse_sql_metadata(sql, source_dialect=source_dialect)
         if not payload.get("ok"):
             err = payload.get("error", {})
@@ -310,14 +317,11 @@ class DwCatalogRepository:
             raise ValueError(msg)
 
         ingest_create = DwSqlIngestCreate(
-            source_type=source_type,
             sql_hash=sql_content_hash(sql),
             thread_id=thread_id,
-            source_path=source_path,
             source_dialect=source_dialect,
             sql_text=sql,
             extra_json=extra_json,
-            sql_purpose=sql_purpose,
         )
 
         statements_payload: list[DwSqlStatementCreate] = []
@@ -325,20 +329,55 @@ class DwCatalogRepository:
             idx = stmt["index"]
             kind = stmt.get("kind")
             raw_json = json.dumps(stmt, ensure_ascii=False)
-            statements_payload.append(DwSqlStatementCreate(statement_index=idx, kind=kind, raw_json=raw_json))
+            purpose = infer_sql_purpose_from_kind(kind)
+            statements_payload.append(DwSqlStatementCreate(statement_index=idx, kind=kind, raw_json=raw_json, sql_purpose=purpose))
 
         ingest = self.create_ingest(ingest_create)
         stmts = self.create_statements(ingest.id, statements_payload)
 
         tables_by_id: dict[str, DwTable] = {}
+        stmt_by_index: dict[int, DwSqlStatement] = {s.statement_index: s for s in stmts}
+
         for stmt in payload["statements"]:
+            stmt_idx = int(stmt["index"])
+            stmt_row = stmt_by_index.get(stmt_idx)
+            if stmt_row is None:
+                continue
+
+            cte_norm: set[str] = {normalize_sql_identifier(n) for n in (stmt.get("cte_names") or []) if n}
+
             for t in stmt.get("tables") or []:
                 name = t.get("name")
                 if name is None or not str(name).strip():
                     continue
-                tbl = self.upsert_table(
-                    DwTableCreate(catalog=t.get("catalog"), db=t.get("db"), table_name=str(name))
-                )
+
+                name_norm = normalize_sql_identifier(str(name))
+                if name_norm and name_norm in cte_norm:
+                    continue  # do not record virtual tables (CTEs)
+
+                purpose = stmt_row.sql_purpose
+                latest_statement_id = stmt_row.id if purpose in {SqlPurpose.CREATE, SqlPurpose.ALTER} else None
+
+                tbl = self.upsert_table(DwTableCreate(catalog=t.get("catalog"), db=t.get("db"), table_name=str(name), latest_statement_id=latest_statement_id))
                 tables_by_id[tbl.id] = tbl
 
+                self.create_table_statement_log(DwTableStatementLogCreate(table_id=tbl.id, statement_id=stmt_row.id))
+
         return ingest, stmts, list(tables_by_id.values())
+
+    def create_table_statement_log(self, data: DwTableStatementLogCreate) -> DwTableStatementLog:
+        log_id = str(uuid.uuid4())
+        created = _utc_now()
+        created_iso = created.isoformat().replace("+00:00", "Z")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO dw_table_statement_log (id, table_id, statement_id, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (log_id, data.table_id, data.statement_id, created_iso),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM dw_table_statement_log WHERE table_id = ? AND statement_id = ?", (data.table_id, data.statement_id)).fetchone()
+        assert row is not None
+        return self._row_to_table_statement_log(row)

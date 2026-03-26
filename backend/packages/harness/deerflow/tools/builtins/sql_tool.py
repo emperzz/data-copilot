@@ -3,14 +3,78 @@
 import json
 
 import sqlglot
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
+from langgraph.typing import ContextT
 from sqlglot.errors import ParseError, TokenError, UnsupportedError
 
+from deerflow.agents.thread_state import ThreadState
+from deerflow.dw_catalog.repository import DwCatalogRepository
 from deerflow.sql.metadata import parse_sql_metadata, serialize_parse_error
 
 
 def _serialize_error(error: Exception) -> str:
     return serialize_parse_error(error)
+
+
+@tool("dw_catalog_ingest_sql", parse_docstring=True)
+def dw_catalog_ingest_sql(
+    runtime: ToolRuntime[ContextT, ThreadState],
+    sql: str,
+    source_dialect: str | None = None,
+) -> str:
+    """Parse SQL, persist ingest rows and statement slices, and upsert referenced tables into the local DW catalog.
+
+    Use this when the user wants SQL analyzed and stored for lineage or catalog tracking (not only ephemeral metadata).
+
+    Args:
+        sql: SQL text to parse and store.
+        source_dialect: Optional sqlglot dialect (e.g. mysql, postgres, spark).
+    """
+    thread_id = None
+    if runtime is not None:
+        thread_id = runtime.context.get("thread_id")
+
+    repo = DwCatalogRepository()
+    repo.ensure_schema()
+
+    try:
+        ingest, stmts, tables = repo.ingest_sql_text(
+            sql,
+            source_dialect=source_dialect,
+            thread_id=thread_id,
+        )
+    except ValueError as exc:
+        return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+
+    return json.dumps(
+        {
+            "ok": True,
+            "ingest_id": ingest.id,
+            "sql_hash": ingest.sql_hash,
+            "statement_count": len(stmts),
+            "statements": [
+                {
+                    "id": s.id,
+                    "statement_index": s.statement_index,
+                    "kind": s.kind,
+                    "sql_purpose": s.sql_purpose.value,
+                    "sql_operation_category": s.sql_operation_category.value,
+                }
+                for s in stmts
+            ],
+            "tables": [
+                {
+                    "id": t.id,
+                    "catalog": t.catalog,
+                    "db": t.db,
+                    "table_name": t.table_name,
+                    "latest_statement_id": t.latest_statement_id,
+                }
+                for t in tables
+            ],
+        },
+        ensure_ascii=False,
+    )
 
 
 @tool("sql_extract_metadata", parse_docstring=True)

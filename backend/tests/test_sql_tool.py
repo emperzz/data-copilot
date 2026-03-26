@@ -1,5 +1,6 @@
 import json
 import importlib
+from types import SimpleNamespace
 
 sql_tool_module = importlib.import_module("deerflow.tools.builtins.sql_tool")
 
@@ -62,6 +63,50 @@ def test_sql_extract_metadata_select_join() -> None:
     assert {"a", "b", "id"}.issubset(column_names)
 
 
+def test_dw_catalog_ingest_sql_success(tmp_path, monkeypatch) -> None:
+    from deerflow.dw_catalog.repository import DwCatalogRepository
+
+    db = tmp_path / "cat.db"
+    repo = DwCatalogRepository(db_path=db)
+    monkeypatch.setattr(sql_tool_module, "DwCatalogRepository", lambda: repo)
+
+    runtime = SimpleNamespace(context={"thread_id": "t-1"}, state=None, config={})
+    raw = sql_tool_module.dw_catalog_ingest_sql.func(
+        runtime,
+        "SELECT a FROM d JOIN e ON d.id = e.id",
+        None,
+    )
+    payload = json.loads(raw)
+    assert payload["ok"] is True
+    assert payload["ingest_id"]
+    assert payload["statement_count"] == 1
+    table_names = {t["table_name"] for t in payload["tables"]}
+    assert table_names == {"d", "e"}
+    assert payload["statements"][0]["sql_purpose"] == "query"
+    assert payload["statements"][0]["sql_operation_category"] == "dql"
+
+    loaded = repo.get_ingest(payload["ingest_id"])
+    assert loaded is not None
+    assert loaded.thread_id == "t-1"
+
+
+def test_dw_catalog_ingest_sql_parse_error(tmp_path, monkeypatch) -> None:
+    from deerflow.dw_catalog.repository import DwCatalogRepository
+
+    db = tmp_path / "cat.db"
+    repo = DwCatalogRepository(db_path=db)
+    monkeypatch.setattr(sql_tool_module, "DwCatalogRepository", lambda: repo)
+
+    raw = sql_tool_module.dw_catalog_ingest_sql.func(
+        None,
+        "SELECT FROM",
+        None,
+    )
+    payload = json.loads(raw)
+    assert payload["ok"] is False
+    assert "error" in payload
+
+
 def test_sql_extract_metadata_cte() -> None:
     result = sql_tool_module.sql_extract_metadata.invoke(
         {
@@ -74,3 +119,5 @@ def test_sql_extract_metadata_cte() -> None:
     assert stmt["kind"] in {"Select", "With"}
     assert "x" in stmt["cte_names"]
     assert any(t["name"] == "x" for t in stmt["tables"])
+
+

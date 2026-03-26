@@ -7,6 +7,7 @@ from deerflow.reflection import resolve_variable
 from deerflow.tools.builtins import (
     ask_clarification_tool,
     present_file_tool,
+    dw_catalog_ingest_sql,
     sql_check_syntax,
     sql_extract_metadata,
     sql_transpile,
@@ -23,6 +24,7 @@ BUILTIN_TOOLS = [
     sql_check_syntax,
     sql_extract_metadata,
     sql_transpile,
+    dw_catalog_ingest_sql,
 ]
 
 SUBAGENT_TOOLS = [
