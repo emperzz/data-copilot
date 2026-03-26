@@ -1,0 +1,167 @@
+---
+description: DeerFlow 二次开发核心依据（架构边界、工程规范、环境一致性、质量门禁与迭代流程）
+alwaysApply: true
+---
+
+# DeerFlow 二次开发核心指导（统一执行版）
+
+## 0. 目标与适用范围
+
+- 本规则是 DeerFlow 二次开发的统一执行标准，适用于后端（Python/FastAPI/LangGraph）、前端（Next.js/TypeScript）与配置层。
+- 所有实现以“当前仓库源码 + 当前需求”作为最终事实来源，任何文档仅用于辅助理解。
+
+## 1. 信息来源优先级（防止误判）
+
+执行任务时按以下优先级判断：
+
+1. 用户当前需求与对话约束。
+2. 当前仓库源码与配置文件（最终事实）。
+3. `docs/architecture-overview.md`（系统级认知）。
+4. `docs/feature-development-suggestions.md` 与 `mvp.md`（规划参考，不是硬约束）。
+5. 其他文档与历史方案（仅用于补充思路）。
+
+若文档与源码不一致，以源码为准。
+
+## 2. 架构边界与放置原则（必须遵守）
+
+### 2.1 后端边界
+
+- Gateway API 放在 `backend/app/gateway/routers/`，只做 HTTP 协议层与参数校验，不承载复杂业务逻辑。
+- 智能体、工具、状态与中间件能力放在 `backend/packages/harness/deerflow/` 下对应模块。
+- 新功能优先复用现有机制：Tool、Subagent、Middleware、Memory、Skills、Custom Agent。
+
+### 2.2 前端边界
+
+- 页面路由放在 `frontend/src/app/`。
+- 可复用 UI 放在 `frontend/src/components/`。
+- 与后端交互和业务逻辑放在 `frontend/src/core/`，避免在页面组件中堆积请求逻辑。
+
+### 2.3 配置边界
+
+- 可配置能力优先走 `config.yaml` / `extensions_config.json`，避免将环境差异硬编码在业务代码中。
+- 新工具必须进入 tool group，确保可按组隔离能力。
+
+## 3. 功能开发的标准流程（每次都执行）
+
+### 3.1 需求收敛
+
+- 明确：目标用户、输入输出、约束、验收标准、非目标范围。
+- 对规划文档中的功能进行“需求当下化”，不机械照搬历史路径或命名。
+
+### 3.2 设计落盘
+
+- 先定义契约再写实现：API schema、状态字段、工具输入输出、错误码与失败策略。
+- 先选复用点：现有 router/tool/middleware/state 是否可扩展。
+- 新增模块命名统一、职责单一、边界清晰。
+
+### 3.3 实现顺序
+
+按“数据层 -> 能力层 -> 接口层 -> UI层 -> 交互优化”推进：
+
+1. 数据模型与存储（单一事实源）。
+2. 领域工具与解析逻辑。
+3. API/Agent 组装。
+4. 前端展示与操作闭环。
+5. 性能、容错与体验增强。
+
+### 3.4 质量门禁（合并前必须通过）
+
+- 后端：`cd backend && uv run pytest tests/ -v`
+- 后端规范：`cd backend && uvx ruff check .`
+- 前端规范：`cd frontend && pnpm lint`
+- 前端类型：`cd frontend && pnpm typecheck`
+
+任何失败都应先修复再继续开发，不跳过。
+
+## 4. 环境一致性（避免“我这能跑”）
+
+### 4.1 统一基线
+
+- Python 版本：3.12（以 `backend/.python-version` 为准）。
+- 前端包管理：pnpm（以 `frontend/package.json` 的 `packageManager` 为准）。
+- 后端包管理：uv（通过 `backend/pyproject.toml` 管理）。
+
+### 4.2 启动方式
+
+- 推荐统一使用仓库根目录 `make dev`。
+- `make dev` 真实行为来自 `scripts/serve.sh`：
+  - LangGraph：dev 模式默认启用热重载。
+  - Gateway：使用 `--reload` 并包含 `*.yaml` 与 `.env` 变更监听。
+  - Frontend：`next dev --turbo`。
+
+### 4.3 依赖变更纪律
+
+- 新增 Python 依赖：`cd backend && uv add <package>`
+- 新增前端依赖：`cd frontend && pnpm add <package>`
+- 依赖变化后必须验证启动与关键路径，不只验证编译通过。
+
+### 4.4 配置与密钥
+
+- 使用 `.env` / `config.yaml` 注入敏感信息，禁止硬编码。
+- 任何新增环境变量都要同步更新示例与说明文件（如 `.env.example`）。
+
+## 5. 编码规范（语法、可维护性、可演进）
+
+### 5.1 通用要求
+
+- 函数职责单一，复杂分支拆为小函数。
+- 常量替代魔法值，命名体现意图和业务语义。
+- 仅在必要处写“为什么”的注释，不写“代码在做什么”的注释。
+- 不移除与当前任务无关的现有能力。
+
+### 5.2 Python 侧
+
+- 强制类型标注（参数、返回值、关键数据结构）。
+- API 层输入输出使用 Pydantic schema，内部逻辑与协议层解耦。
+- 异常分层：业务异常与系统异常分开处理，返回清晰错误信息。
+- 使用 ruff 保持风格一致，不引入与现有代码风格冲突的格式习惯。
+
+### 5.3 TypeScript/React 侧
+
+- 避免 `any`，未知类型优先 `unknown` + 类型收窄。
+- 组件保持纯展示与逻辑分离：页面/组件不承载重型数据编排。
+- 与后端交互统一放在 `core` 层，组件通过 hook 或 service 消费。
+- 保持导入顺序与 lint 规则一致（含 `import/order` 约束）。
+
+## 6. DeerFlow 特有能力的复用策略
+
+### 6.1 优先复用
+
+- 需要“中断等待用户确认”：优先 `ask_clarification` + `ClarificationMiddleware`。
+- 需要“复杂任务拆解”：优先启用 Subagent 与 Plan Mode。
+- 需要“长期经验积累”：优先复用 Memory 机制，不重复造临时状态系统。
+- 需要“固定流程指导”：优先通过 Skills/Custom Agent 定义，不把流程硬编码在分散逻辑里。
+
+### 6.2 新能力接入
+
+- 新工具优先通过 `config.yaml` 注册并归组，确保可配置启停与权限隔离。
+- 新业务 API 走 Gateway router，并在应用入口统一注册。
+- 新页面走 `workspace` 路由体系，保持导航与状态体验一致。
+
+## 7. 面向你当前产品规划的落地节奏
+
+按 MVP 目标，采用“先闭环、再增强”：
+
+1. 先打通 SQL 输入 -> 解析 -> 存储 -> 查询闭环。
+2. 再做冲突检测与用户确认流程，保证数据质量。
+3. 再做血缘可视化与详情编辑，增强可用性。
+4. 最后做自动化分析与高级能力（多跳追踪、自动任务循环、Browser 自动化）。
+
+每阶段都要有可独立验收的演示路径，不依赖“后续再补”。
+
+## 8. Definition of Done（完成定义）
+
+以下条件全部满足才算完成：
+
+- 功能路径闭环（输入、处理、输出、错误路径可验证）。
+- 与现有架构边界一致，无跨层耦合扩散。
+- 本地开发环境可复现，关键配置有文档说明。
+- 对应 lint/typecheck/test 命令全部通过。
+- 不引入无关改动，不破坏已有功能。
+
+## 9. 明确禁止项
+
+- 禁止依据过期文档直接编码而不核对源码。
+- 禁止将临时调试逻辑、密钥、路径硬编码提交。
+- 禁止跨模块复制粘贴相同业务逻辑（应抽象复用）。
+- 禁止跳过验证直接宣称完成。

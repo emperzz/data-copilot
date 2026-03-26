@@ -1,0 +1,76 @@
+import json
+import importlib
+
+sql_tool_module = importlib.import_module("deerflow.tools.builtins.sql_tool")
+
+
+def test_sql_check_syntax_success() -> None:
+    result = sql_tool_module.sql_check_syntax.invoke({"sql": "SELECT 1"})
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["statements_count"] == 1
+
+
+def test_sql_check_syntax_parse_error() -> None:
+    result = sql_tool_module.sql_check_syntax.invoke({"sql": "SELECT FROM"})
+    payload = json.loads(result)
+    assert payload["ok"] is False
+    assert payload["error"]["type"] in {"ParseError", "TokenError"}
+
+
+def test_sql_transpile_success() -> None:
+    result = sql_tool_module.sql_transpile.invoke(
+        {
+            "sql": "SELECT STRFTIME(x, '%y-%-m-%S')",
+            "source_dialect": "duckdb",
+            "target_dialect": "hive",
+        }
+    )
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["target_dialect"] == "hive"
+    assert len(payload["statements"]) == 1
+    assert "DATE_FORMAT" in payload["statements"][0]
+
+
+def test_sql_transpile_invalid_dialect() -> None:
+    result = sql_tool_module.sql_transpile.invoke(
+        {
+            "sql": "SELECT 1",
+            "target_dialect": "not_a_real_dialect",
+        }
+    )
+    payload = json.loads(result)
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "ValueError"
+
+
+def test_sql_extract_metadata_select_join() -> None:
+    result = sql_tool_module.sql_extract_metadata.invoke(
+        {
+            "sql": "SELECT a, t.b FROM d AS t JOIN e ON t.id = e.id",
+        }
+    )
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert len(payload["statements"]) == 1
+    stmt = payload["statements"][0]
+    assert stmt["kind"] == "Select"
+    table_names = {t["name"] for t in stmt["tables"]}
+    assert table_names == {"d", "e"}
+    column_names = {c["name"] for c in stmt["columns"]}
+    assert {"a", "b", "id"}.issubset(column_names)
+
+
+def test_sql_extract_metadata_cte() -> None:
+    result = sql_tool_module.sql_extract_metadata.invoke(
+        {
+            "sql": "WITH x AS (SELECT 1 AS n) SELECT n FROM x",
+        }
+    )
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    stmt = payload["statements"][0]
+    assert stmt["kind"] in {"Select", "With"}
+    assert "x" in stmt["cte_names"]
+    assert any(t["name"] == "x" for t in stmt["tables"])

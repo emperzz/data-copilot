@@ -267,6 +267,7 @@ export const zhCN: Translations = {
     input: "输入",
     output: "输出",
     total: "总计",
+  },
   // Shortcuts
   shortcuts: {
     searchActions: "搜索操作...",

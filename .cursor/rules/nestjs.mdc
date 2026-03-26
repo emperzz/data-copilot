@@ -1,0 +1,43 @@
+---
+description: NestJS (Node) backend patterns—modules, DI, controllers, providers, pipes/guards/interceptors, DTO validation, and testing. Use when editing, reviewing, or generating NestJS apps or files matching the globs below.
+globs:
+  - "**/*.module.ts"
+  - "**/*.controller.ts"
+  - "**/*.service.ts"
+  - "**/*.guard.ts"
+  - "**/*.pipe.ts"
+  - "**/*.interceptor.ts"
+  - "**/main.ts"
+alwaysApply: false
+---
+
+# NestJS Best Practices
+
+## Structure
+- Organize by feature modules; keep `AppModule` thin and delegate to feature modules.
+- Colocate DTOs, entities, and module-specific types with the feature when they are not shared.
+- Use consistent naming: `*.module.ts`, `*.controller.ts`, `*.service.ts`.
+
+## Dependency injection
+- Prefer constructor injection; mark injectable classes with `@Injectable()`.
+- Register providers in the correct module scope; export what other modules need.
+- Use interfaces/tokens for swapping implementations when testing or extending behavior.
+
+## HTTP layer
+- Keep controllers thin: validate input, delegate to services, return DTOs or serializable shapes.
+- Use route parameters and query DTOs with `class-validator` / `class-transformer` where applicable.
+- Return appropriate HTTP status codes; avoid leaking internal errors in production responses.
+
+## Validation and transformation
+- Use `ValidationPipe` globally or per-route with sensible defaults (`whitelist`, `forbidNonWhitelisted` when strict).
+- Define request DTOs as classes with decorators; separate create/update DTOs when shapes differ.
+
+## Cross-cutting concerns
+- Use guards for auth and authorization; use interceptors for logging, mapping, or response shaping.
+- Use pipes for parsing and validation scoped to parameters when needed.
+
+## Async and errors
+- Prefer async/await in services; handle promise rejections; use Nest exceptions (`NotFoundException`, etc.) for expected HTTP errors.
+
+## Testing
+- Unit-test services with mocked dependencies; e2e-test critical flows with `TestingModule` and the HTTP layer.

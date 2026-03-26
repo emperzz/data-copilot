@@ -97,6 +97,7 @@ backend/src/
 │   └── builtins/           # Built-in tools
 │       ├── present_file_tool.py
 │       ├── ask_clarification_tool.py
+│       ├── sql_tool.py
 │       └── view_image_tool.py
 │
 ├── mcp/                     # MCP integration

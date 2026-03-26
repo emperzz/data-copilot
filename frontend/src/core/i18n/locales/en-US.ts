@@ -280,6 +280,7 @@ export const enUS: Translations = {
     input: "Input",
     output: "Output",
     total: "Total",
+  },
   // Shortcuts
   shortcuts: {
     searchActions: "Search actions...",
