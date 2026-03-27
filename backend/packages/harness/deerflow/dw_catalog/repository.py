@@ -16,13 +16,16 @@ from deerflow.dw_catalog.models import (
     DwSqlStatement,
     DwSqlStatementCreate,
     DwTable,
+    DwTableLineage,
+    DwTableLineageCreate,
     DwTableCreate,
     DwTableStatementLog,
     DwTableStatementLogCreate,
     SqlPurpose,
     infer_sql_purpose_from_kind,
 )
-from deerflow.dw_catalog.normalize import normalize_sql_identifier
+from deerflow.sql.normalize import normalize_sql_identifier
+from deerflow.sql.lineage import extract_source_table_keys, extract_target_table_keys, parse_sql_statements, supports_lineage
 from deerflow.sql.metadata import parse_sql_metadata
 
 
@@ -92,6 +95,19 @@ CREATE TABLE IF NOT EXISTS dw_table_statement_log (
 
 CREATE INDEX IF NOT EXISTS ix_dw_table_statement_log_table ON dw_table_statement_log(table_id);
 CREATE INDEX IF NOT EXISTS ix_dw_table_statement_log_statement ON dw_table_statement_log(statement_id);
+
+CREATE TABLE IF NOT EXISTS dw_table_lineage (
+  id TEXT PRIMARY KEY,
+  source_table_id TEXT NOT NULL REFERENCES dw_table(id) ON DELETE CASCADE,
+  target_table_id TEXT NOT NULL REFERENCES dw_table(id) ON DELETE CASCADE,
+  statement_id TEXT NOT NULL REFERENCES dw_sql_statement(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  UNIQUE (source_table_id, target_table_id, statement_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_dw_table_lineage_source ON dw_table_lineage(source_table_id);
+CREATE INDEX IF NOT EXISTS ix_dw_table_lineage_target ON dw_table_lineage(target_table_id);
+CREATE INDEX IF NOT EXISTS ix_dw_table_lineage_statement ON dw_table_lineage(statement_id);
 """
 
 
@@ -155,6 +171,16 @@ class DwCatalogRepository:
         return DwTableStatementLog(
             id=row["id"],
             table_id=row["table_id"],
+            statement_id=row["statement_id"],
+            created_at=_dt_from_sql(row["created_at"]),
+        )
+
+    @staticmethod
+    def _row_to_table_lineage(row: sqlite3.Row) -> DwTableLineage:
+        return DwTableLineage(
+            id=row["id"],
+            source_table_id=row["source_table_id"],
+            target_table_id=row["target_table_id"],
             statement_id=row["statement_id"],
             created_at=_dt_from_sql(row["created_at"]),
         )
@@ -315,7 +341,7 @@ class DwCatalogRepository:
             err = payload.get("error", {})
             msg = err.get("message", "parse failed")
             raise ValueError(msg)
-
+        parsed_statements = parse_sql_statements(sql, source_dialect=source_dialect)
         ingest_create = DwSqlIngestCreate(
             sql_hash=sql_content_hash(sql),
             thread_id=thread_id,
@@ -363,6 +389,37 @@ class DwCatalogRepository:
 
                 self.create_table_statement_log(DwTableStatementLogCreate(table_id=tbl.id, statement_id=stmt_row.id))
 
+            if not supports_lineage(stmt_row.sql_purpose.value):
+                continue
+
+            if stmt_idx >= len(parsed_statements):
+                continue
+            statement_expr = parsed_statements[stmt_idx]
+
+            target_keys = extract_target_table_keys(statement_expr, cte_norm)
+            if not target_keys:
+                continue
+
+            source_keys = extract_source_table_keys(stmt, cte_norm, target_keys)
+            if not source_keys:
+                continue
+
+            for source_key in source_keys:
+                source_tbl = self.get_table_by_key(source_key[0], source_key[1], source_key[2])
+                if source_tbl is None:
+                    continue
+                for target_key in target_keys:
+                    target_tbl = self.get_table_by_key(target_key[0], target_key[1], target_key[2])
+                    if target_tbl is None or source_tbl.id == target_tbl.id:
+                        continue
+                    self.create_table_lineage(
+                        DwTableLineageCreate(
+                            source_table_id=source_tbl.id,
+                            target_table_id=target_tbl.id,
+                            statement_id=stmt_row.id,
+                        )
+                    )
+
         return ingest, stmts, list(tables_by_id.values())
 
     def create_table_statement_log(self, data: DwTableStatementLogCreate) -> DwTableStatementLog:
@@ -381,3 +438,34 @@ class DwCatalogRepository:
             row = conn.execute("SELECT * FROM dw_table_statement_log WHERE table_id = ? AND statement_id = ?", (data.table_id, data.statement_id)).fetchone()
         assert row is not None
         return self._row_to_table_statement_log(row)
+
+    def create_table_lineage(self, data: DwTableLineageCreate) -> DwTableLineage:
+        lineage_id = str(uuid.uuid4())
+        created = _utc_now()
+        created_iso = created.isoformat().replace("+00:00", "Z")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO dw_table_lineage (id, source_table_id, target_table_id, statement_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (lineage_id, data.source_table_id, data.target_table_id, data.statement_id, created_iso),
+            )
+            conn.commit()
+            row = conn.execute(
+                """
+                SELECT * FROM dw_table_lineage
+                WHERE source_table_id = ? AND target_table_id = ? AND statement_id = ?
+                """,
+                (data.source_table_id, data.target_table_id, data.statement_id),
+            ).fetchone()
+        assert row is not None
+        return self._row_to_table_lineage(row)
+
+    def list_table_lineage_for_statement(self, statement_id: str) -> list[DwTableLineage]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM dw_table_lineage WHERE statement_id = ? ORDER BY created_at ASC",
+                (statement_id,),
+            ).fetchall()
+        return [self._row_to_table_lineage(r) for r in rows]

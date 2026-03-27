@@ -181,3 +181,14 @@ class DwTableStatementLogCreate(BaseModel):
 class DwTableStatementLog(DwTableStatementLogCreate):
     id: str
     created_at: datetime
+
+
+class DwTableLineageCreate(BaseModel):
+    source_table_id: str = Field(..., min_length=1)
+    target_table_id: str = Field(..., min_length=1)
+    statement_id: str = Field(..., min_length=1)
+
+
+class DwTableLineage(DwTableLineageCreate):
+    id: str
+    created_at: datetime

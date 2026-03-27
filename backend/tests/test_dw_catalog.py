@@ -82,6 +82,81 @@ def test_ingest_sql_text_parse_error(repo: DwCatalogRepository) -> None:
         repo.ingest_sql_text("SELECT FROM")
 
 
+def test_ingest_sql_text_builds_lineage_for_insert(repo: DwCatalogRepository) -> None:
+    sql = "INSERT INTO d.t_target SELECT id FROM d.t_source"
+    _, stmts, tables = repo.ingest_sql_text(sql)
+    assert len(stmts) == 1
+    assert {t.table_name for t in tables} == {"t_target", "t_source"}
+
+    lineage = repo.list_table_lineage_for_statement(stmts[0].id)
+    assert len(lineage) == 1
+
+    source_table = repo.get_table(lineage[0].source_table_id)
+    target_table = repo.get_table(lineage[0].target_table_id)
+    assert source_table is not None
+    assert target_table is not None
+    assert source_table.table_name == "t_source"
+    assert target_table.table_name == "t_target"
+
+
+def test_ingest_sql_text_builds_lineage_for_ctas(repo: DwCatalogRepository) -> None:
+    sql = "CREATE TABLE d.t_new AS SELECT id FROM d.t_old"
+    _, stmts, tables = repo.ingest_sql_text(sql)
+    assert len(stmts) == 1
+    assert {t.table_name for t in tables} == {"t_new", "t_old"}
+
+    lineage = repo.list_table_lineage_for_statement(stmts[0].id)
+    assert len(lineage) == 1
+
+    source_table = repo.get_table(lineage[0].source_table_id)
+    target_table = repo.get_table(lineage[0].target_table_id)
+    assert source_table is not None
+    assert target_table is not None
+    assert source_table.table_name == "t_old"
+    assert target_table.table_name == "t_new"
+
+
+def test_ingest_sql_text_does_not_build_lineage_for_query(repo: DwCatalogRepository) -> None:
+    sql = "SELECT id FROM d.t_source"
+    _, stmts, _ = repo.ingest_sql_text(sql)
+    assert len(stmts) == 1
+    assert repo.list_table_lineage_for_statement(stmts[0].id) == []
+
+
+def test_ingest_sql_text_lineage_skips_cte_virtual_table(repo: DwCatalogRepository) -> None:
+    sql = """
+    INSERT INTO d.t_target
+    WITH temp_cte AS (SELECT id FROM d.t_source)
+    SELECT id FROM temp_cte
+    """
+    _, stmts, _ = repo.ingest_sql_text(sql)
+    assert len(stmts) == 1
+
+    lineage = repo.list_table_lineage_for_statement(stmts[0].id)
+    assert len(lineage) == 1
+
+    source_table = repo.get_table(lineage[0].source_table_id)
+    target_table = repo.get_table(lineage[0].target_table_id)
+    assert source_table is not None
+    assert target_table is not None
+    assert source_table.table_name == "t_source"
+    assert target_table.table_name == "t_target"
+
+
+def test_ingest_sql_text_does_not_build_lineage_for_update(repo: DwCatalogRepository) -> None:
+    sql = "UPDATE d.t_target SET id = s.id FROM d.t_source AS s WHERE d.t_target.id = s.id"
+    _, stmts, _ = repo.ingest_sql_text(sql)
+    assert len(stmts) == 1
+    assert repo.list_table_lineage_for_statement(stmts[0].id) == []
+
+
+def test_ingest_sql_text_does_not_build_lineage_for_delete(repo: DwCatalogRepository) -> None:
+    sql = "DELETE FROM d.t_target WHERE id IN (SELECT id FROM d.t_source)"
+    _, stmts, _ = repo.ingest_sql_text(sql)
+    assert len(stmts) == 1
+    assert repo.list_table_lineage_for_statement(stmts[0].id) == []
+
+
 def test_sql_purpose_coerce() -> None:
     assert SqlPurpose.coerce("MERGE") == SqlPurpose.MERGE
     assert SqlPurpose.coerce("  drop  ") == SqlPurpose.DROP
