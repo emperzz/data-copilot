@@ -16,6 +16,32 @@ export default function WorkspaceLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   const [settings, setSettings] = useLocalSettings();
   const [open, setOpen] = useState(false); // SSR default: open (matches server render)
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") {
+      return;
+    }
+
+    const originalMeasure = performance.measure.bind(performance);
+    performance.measure = ((...args: Parameters<typeof performance.measure>) => {
+      try {
+        return originalMeasure(...args);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes("cannot have a negative time stamp") &&
+          message.includes("WorkspacePage")
+        ) {
+          return undefined as ReturnType<typeof performance.measure>;
+        }
+        throw error;
+      }
+    }) as typeof performance.measure;
+
+    return () => {
+      performance.measure = originalMeasure;
+    };
+  }, []);
+
   useLayoutEffect(() => {
     // Runs synchronously before first paint on the client — no visual flash
     setOpen(!getLocalSettings().layout.sidebar_collapsed);
