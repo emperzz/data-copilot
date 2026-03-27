@@ -45,16 +45,29 @@ def parse_sql_statements(sql: str, source_dialect: str | None = None) -> list[ex
     return sqlglot.parse(sql, read=source_dialect)
 
 
+def resolve_statement_kind(statement: exp.Expression | None) -> str | None:
+    current = statement
+    while isinstance(current, exp.With):
+        current = current.this if isinstance(current.this, exp.Expression) else None
+    if current is None:
+        return None
+    return type(current).__name__
+
+
 def extract_target_table_keys(statement: exp.Expression, cte_norm: set[str]) -> set[TableKey]:
+    current: exp.Expression = statement
+    while isinstance(current, exp.With) and isinstance(current.this, exp.Expression):
+        current = current.this
+
     targets: list[exp.Table] = []
-    if isinstance(statement, (exp.Insert, exp.Merge)):
-        table_node = _unwrap_table(statement.this if hasattr(statement, "this") else None)
+    if isinstance(current, (exp.Insert, exp.Merge)):
+        table_node = _unwrap_table(current.this if hasattr(current, "this") else None)
         if table_node is not None:
             targets.append(table_node)
-    elif isinstance(statement, exp.Create):
-        is_ctas = statement.expression is not None
+    elif isinstance(current, exp.Create):
+        is_ctas = current.expression is not None
         if is_ctas:
-            table_node = _unwrap_table(statement.this if hasattr(statement, "this") else None)
+            table_node = _unwrap_table(current.this if hasattr(current, "this") else None)
             if table_node is not None:
                 targets.append(table_node)
 

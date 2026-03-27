@@ -157,6 +157,28 @@ def test_ingest_sql_text_does_not_build_lineage_for_delete(repo: DwCatalogReposi
     assert repo.list_table_lineage_for_statement(stmts[0].id) == []
 
 
+def test_ingest_sql_text_builds_lineage_for_with_insert(repo: DwCatalogRepository) -> None:
+    sql = """
+    WITH base AS (
+      SELECT id FROM d.t_source
+    )
+    INSERT OVERWRITE TABLE d.t_target
+    SELECT id FROM base
+    """
+    _, stmts, _ = repo.ingest_sql_text(sql)
+    assert len(stmts) == 1
+    assert stmts[0].sql_purpose == SqlPurpose.INSERT
+    lineage = repo.list_table_lineage_for_statement(stmts[0].id)
+    assert len(lineage) == 1
+
+    source_table = repo.get_table(lineage[0].source_table_id)
+    target_table = repo.get_table(lineage[0].target_table_id)
+    assert source_table is not None
+    assert target_table is not None
+    assert source_table.table_name == "t_source"
+    assert target_table.table_name == "t_target"
+
+
 def test_sql_purpose_coerce() -> None:
     assert SqlPurpose.coerce("MERGE") == SqlPurpose.MERGE
     assert SqlPurpose.coerce("  drop  ") == SqlPurpose.DROP

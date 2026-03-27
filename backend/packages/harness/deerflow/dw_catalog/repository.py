@@ -25,7 +25,7 @@ from deerflow.dw_catalog.models import (
     infer_sql_purpose_from_kind,
 )
 from deerflow.sql.normalize import normalize_sql_identifier
-from deerflow.sql.lineage import extract_source_table_keys, extract_target_table_keys, parse_sql_statements, supports_lineage
+from deerflow.sql.lineage import extract_source_table_keys, extract_target_table_keys, parse_sql_statements, resolve_statement_kind, supports_lineage
 from deerflow.sql.metadata import parse_sql_metadata
 
 
@@ -354,6 +354,10 @@ class DwCatalogRepository:
         for stmt in payload["statements"]:
             idx = stmt["index"]
             kind = stmt.get("kind")
+            if idx < len(parsed_statements):
+                resolved_kind = resolve_statement_kind(parsed_statements[idx])
+                if resolved_kind is not None and resolved_kind != kind:
+                    kind = resolved_kind
             raw_json = json.dumps(stmt, ensure_ascii=False)
             purpose = infer_sql_purpose_from_kind(kind)
             statements_payload.append(DwSqlStatementCreate(statement_index=idx, kind=kind, raw_json=raw_json, sql_purpose=purpose))
