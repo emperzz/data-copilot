@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS dw_sql_statement (
   kind TEXT,
   raw_json TEXT NOT NULL,
   sql_purpose TEXT NOT NULL DEFAULT 'unknown',
+  statement_notes_md TEXT,
   created_at TEXT NOT NULL,
   UNIQUE (ingest_id, statement_index)
 );
@@ -150,6 +151,7 @@ class DwCatalogRepository:
             kind=row["kind"],
             raw_json=row["raw_json"],
             sql_purpose=SqlPurpose.coerce(row["sql_purpose"]),
+            statement_notes_md=row["statement_notes_md"],
             created_at=_dt_from_sql(row["created_at"]),
         )
 
@@ -220,10 +222,20 @@ class DwCatalogRepository:
                 sid = str(uuid.uuid4())
                 conn.execute(
                     """
-                    INSERT INTO dw_sql_statement (id, ingest_id, statement_index, kind, raw_json, sql_purpose, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO dw_sql_statement (
+                      id, ingest_id, statement_index, kind, raw_json, sql_purpose, statement_notes_md, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (sid, ingest_id, stmt.statement_index, stmt.kind, stmt.raw_json, stmt.sql_purpose.value, created_iso),
+                    (
+                        sid,
+                        ingest_id,
+                        stmt.statement_index,
+                        stmt.kind,
+                        stmt.raw_json,
+                        stmt.sql_purpose.value,
+                        stmt.statement_notes_md,
+                        created_iso,
+                    ),
                 )
                 out.append(
                     DwSqlStatement(
@@ -233,6 +245,7 @@ class DwCatalogRepository:
                         kind=stmt.kind,
                         raw_json=stmt.raw_json,
                         sql_purpose=stmt.sql_purpose,
+                        statement_notes_md=stmt.statement_notes_md,
                         created_at=created,
                     )
                 )
@@ -334,6 +347,7 @@ class DwCatalogRepository:
         source_dialect: str | None = None,
         thread_id: str | None = None,
         extra_json: str | None = None,
+        statement_notes_md: list[str] | None = None,
     ) -> tuple[DwSqlIngest, list[DwSqlStatement], list[DwTable]]:
         """Parse SQL, persist ingest + statements, upsert referenced physical tables, and write history logs."""
         payload = parse_sql_metadata(sql, source_dialect=source_dialect)
@@ -341,6 +355,12 @@ class DwCatalogRepository:
             err = payload.get("error", {})
             msg = err.get("message", "parse failed")
             raise ValueError(msg)
+        stmt_entries = payload["statements"]
+        if statement_notes_md is not None:
+            if len(statement_notes_md) != len(stmt_entries):
+                raise ValueError(
+                    f"statement_notes_md length ({len(statement_notes_md)}) must match statement count ({len(stmt_entries)})"
+                )
         parsed_statements = parse_sql_statements(sql, source_dialect=source_dialect)
         ingest_create = DwSqlIngestCreate(
             sql_hash=sql_content_hash(sql),
@@ -351,7 +371,7 @@ class DwCatalogRepository:
         )
 
         statements_payload: list[DwSqlStatementCreate] = []
-        for stmt in payload["statements"]:
+        for pos, stmt in enumerate(stmt_entries):
             idx = stmt["index"]
             kind = stmt.get("kind")
             if idx < len(parsed_statements):
@@ -360,7 +380,18 @@ class DwCatalogRepository:
                     kind = resolved_kind
             raw_json = json.dumps(stmt, ensure_ascii=False)
             purpose = infer_sql_purpose_from_kind(kind)
-            statements_payload.append(DwSqlStatementCreate(statement_index=idx, kind=kind, raw_json=raw_json, sql_purpose=purpose))
+            notes: str | None = None
+            if statement_notes_md is not None:
+                notes = statement_notes_md[pos]
+            statements_payload.append(
+                DwSqlStatementCreate(
+                    statement_index=idx,
+                    kind=kind,
+                    raw_json=raw_json,
+                    sql_purpose=purpose,
+                    statement_notes_md=notes,
+                )
+            )
 
         ingest = self.create_ingest(ingest_create)
         stmts = self.create_statements(ingest.id, statements_payload)

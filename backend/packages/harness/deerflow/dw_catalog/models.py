@@ -146,6 +146,10 @@ class DwSqlStatementCreate(BaseModel):
     kind: str | None = None
     raw_json: str = Field(..., min_length=1, description="JSON payload for one statement slice")
     sql_purpose: SqlPurpose = SqlPurpose.UNKNOWN
+    statement_notes_md: str | None = Field(
+        default=None,
+        description="Markdown: keywords, business purpose, simplified core SQL; one entry per statement at ingest",
+    )
 
 
 class DwSqlStatement(DwSqlStatementCreate):

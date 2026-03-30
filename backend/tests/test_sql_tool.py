@@ -70,10 +70,15 @@ def test_dw_catalog_ingest_sql_success(tmp_path, monkeypatch) -> None:
     repo = DwCatalogRepository(db_path=db)
     monkeypatch.setattr(sql_tool_module, "DwCatalogRepository", lambda: repo)
 
+    note0 = (
+        "## Keywords\n`JOIN`, `d`, `e`\n\n## 业务目的\n联表取字段 a。\n\n## 简化 SQL\n```sql\n"
+        "SELECT a FROM d JOIN e ON d.id = e.id\n```\n"
+    )
     runtime = SimpleNamespace(context={"thread_id": "t-1"}, state=None, config={})
     raw = sql_tool_module.dw_catalog_ingest_sql.func(
         runtime,
         "SELECT a FROM d JOIN e ON d.id = e.id",
+        [note0],
         None,
     )
     payload = json.loads(raw)
@@ -84,10 +89,32 @@ def test_dw_catalog_ingest_sql_success(tmp_path, monkeypatch) -> None:
     assert table_names == {"d", "e"}
     assert payload["statements"][0]["sql_purpose"] == "query"
     assert payload["statements"][0]["sql_operation_category"] == "dql"
+    assert payload["statements"][0]["statement_notes_md"] == note0
 
     loaded = repo.get_ingest(payload["ingest_id"])
     assert loaded is not None
     assert loaded.thread_id == "t-1"
+    persisted = repo.list_statements_for_ingest(payload["ingest_id"])
+    assert len(persisted) == 1
+    assert persisted[0].statement_notes_md == note0
+
+
+def test_dw_catalog_ingest_sql_statement_notes_length_mismatch(tmp_path, monkeypatch) -> None:
+    from deerflow.dw_catalog.repository import DwCatalogRepository
+
+    db = tmp_path / "cat.db"
+    repo = DwCatalogRepository(db_path=db)
+    monkeypatch.setattr(sql_tool_module, "DwCatalogRepository", lambda: repo)
+
+    raw = sql_tool_module.dw_catalog_ingest_sql.func(
+        None,
+        "SELECT 1",
+        [],
+        None,
+    )
+    payload = json.loads(raw)
+    assert payload["ok"] is False
+    assert "statement_notes_md" in payload["error"] or "1 entries" in payload["error"]
 
 
 def test_dw_catalog_ingest_sql_parse_error(tmp_path, monkeypatch) -> None:
@@ -100,6 +127,7 @@ def test_dw_catalog_ingest_sql_parse_error(tmp_path, monkeypatch) -> None:
     raw = sql_tool_module.dw_catalog_ingest_sql.func(
         None,
         "SELECT FROM",
+        [],
         None,
     )
     payload = json.loads(raw)

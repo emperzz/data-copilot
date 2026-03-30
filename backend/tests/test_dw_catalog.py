@@ -82,6 +82,21 @@ def test_ingest_sql_text_parse_error(repo: DwCatalogRepository) -> None:
         repo.ingest_sql_text("SELECT FROM")
 
 
+def test_ingest_sql_text_persists_statement_notes_md(repo: DwCatalogRepository) -> None:
+    sql = "SELECT 1 AS x"
+    notes = ["## Keywords\n`literal`\n\n## 业务目的\n占位。\n\n## 简化 SQL\n```sql\nSELECT 1 AS x\n```\n"]
+    _, stmts, _ = repo.ingest_sql_text(sql, statement_notes_md=notes)
+    assert len(stmts) == 1
+    assert stmts[0].statement_notes_md == notes[0]
+    again = repo.list_statements_for_ingest(stmts[0].ingest_id)
+    assert again[0].statement_notes_md == notes[0]
+
+
+def test_ingest_sql_text_statement_notes_length_mismatch(repo: DwCatalogRepository) -> None:
+    with pytest.raises(ValueError, match="statement_notes_md length"):
+        repo.ingest_sql_text("SELECT 1", statement_notes_md=["a", "b"])
+
+
 def test_ingest_sql_text_builds_lineage_for_insert(repo: DwCatalogRepository) -> None:
     sql = "INSERT INTO d.t_target SELECT id FROM d.t_source"
     _, stmts, tables = repo.ingest_sql_text(sql)

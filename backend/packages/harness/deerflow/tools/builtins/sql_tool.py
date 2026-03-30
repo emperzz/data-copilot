@@ -20,19 +20,47 @@ def _serialize_error(error: Exception) -> str:
 def dw_catalog_ingest_sql(
     runtime: ToolRuntime[ContextT, ThreadState],
     sql: str,
+    statement_notes_md: list[str],
     source_dialect: str | None = None,
 ) -> str:
     """Parse SQL, persist ingest rows and statement slices, and upsert referenced tables into the local DW catalog.
 
     Use this when the user wants SQL analyzed and stored for lineage or catalog tracking (not only ephemeral metadata).
+    For every top-level statement in ``sql`` (same order as returned by the parser), provide one Markdown note in
+    ``statement_notes_md``. Each note must include: a short keyword line (what the statement does / which data),
+    a business purpose and value section, and a fenced code block with a simplified core-logic SQL only.
 
     Args:
         sql: SQL text to parse and store.
+        statement_notes_md: One Markdown string per statement, in parser order (same length as statement count).
         source_dialect: Optional sqlglot dialect (e.g. mysql, postgres, spark).
     """
     thread_id = None
     if runtime is not None:
         thread_id = runtime.context.get("thread_id")
+
+    payload = parse_sql_metadata(sql, source_dialect=source_dialect)
+    if not payload.get("ok"):
+        err = payload.get("error", {})
+        msg = err.get("message", "parse failed") if isinstance(err, dict) else str(err)
+        return json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
+
+    stmt_entries = payload["statements"]
+    n = len(stmt_entries)
+    if len(statement_notes_md) != n:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": f"statement_notes_md must have {n} entries (one per statement); got {len(statement_notes_md)}",
+            },
+            ensure_ascii=False,
+        )
+    for i, note in enumerate(statement_notes_md):
+        if not str(note).strip():
+            return json.dumps(
+                {"ok": False, "error": f"statement_notes_md[{i}] must be non-empty Markdown"},
+                ensure_ascii=False,
+            )
 
     repo = DwCatalogRepository()
     repo.ensure_schema()
@@ -42,6 +70,7 @@ def dw_catalog_ingest_sql(
             sql,
             source_dialect=source_dialect,
             thread_id=thread_id,
+            statement_notes_md=statement_notes_md,
         )
     except ValueError as exc:
         return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -59,6 +88,7 @@ def dw_catalog_ingest_sql(
                     "kind": s.kind,
                     "sql_purpose": s.sql_purpose.value,
                     "sql_operation_category": s.sql_operation_category.value,
+                    "statement_notes_md": s.statement_notes_md,
                 }
                 for s in stmts
             ],
