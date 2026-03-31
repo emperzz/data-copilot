@@ -2,14 +2,12 @@
 
 import json
 
-import sqlglot
 from langchain.tools import ToolRuntime, tool
 from langgraph.typing import ContextT
-from sqlglot.errors import ParseError, TokenError, UnsupportedError
 
 from deerflow.agents.thread_state import ThreadState
 from deerflow.dw_catalog.repository import DwCatalogRepository
-from deerflow.sql.metadata import parse_sql_metadata, serialize_parse_error
+from deerflow.sql.metadata import check_syntax_payload, parse_sql_metadata, serialize_parse_error, transpile_payload
 
 
 def _serialize_error(error: Exception) -> str:
@@ -137,17 +135,8 @@ def sql_check_syntax(sql: str, source_dialect: str | None = None) -> str:
     Returns:
         JSON string describing whether SQL is valid and parse details.
     """
-    try:
-        parsed = sqlglot.parse(sql, read=source_dialect)
-    except (ParseError, TokenError, ValueError) as error:
-        return _serialize_error(error)
-
     return json.dumps(
-        {
-            "ok": True,
-            "statements_count": len(parsed),
-            "source_dialect": source_dialect,
-        },
+        check_syntax_payload(sql, source_dialect=source_dialect),
         ensure_ascii=False,
     )
 
@@ -172,22 +161,12 @@ def sql_transpile(
     Returns:
         JSON string containing transpiled SQL statements or error details.
     """
-    try:
-        statements = sqlglot.transpile(
-            sql,
-            read=source_dialect,
-            write=target_dialect,
-            pretty=pretty,
-        )
-    except (ParseError, TokenError, UnsupportedError, ValueError) as error:
-        return _serialize_error(error)
-
     return json.dumps(
-        {
-            "ok": True,
-            "source_dialect": source_dialect,
-            "target_dialect": target_dialect,
-            "statements": statements,
-        },
+        transpile_payload(
+            sql,
+            target_dialect=target_dialect,
+            source_dialect=source_dialect,
+            pretty=pretty,
+        ),
         ensure_ascii=False,
     )

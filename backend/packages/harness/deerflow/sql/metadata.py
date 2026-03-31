@@ -11,7 +11,7 @@ from typing import Any
 
 import sqlglot
 from sqlglot import expressions as exp
-from sqlglot.errors import ParseError, TokenError
+from sqlglot.errors import ParseError, TokenError, UnsupportedError
 
 
 def error_payload(error: Exception) -> dict[str, Any]:
@@ -144,3 +144,43 @@ def parse_sql_metadata(sql: str, source_dialect: str | None = None) -> dict[str,
 def serialize_parse_error(error: Exception) -> str:
     """JSON string for tool responses."""
     return json.dumps(error_payload(error), ensure_ascii=False)
+
+
+def check_syntax_payload(sql: str, source_dialect: str | None = None) -> dict[str, Any]:
+    """Validate SQL syntax and return a structured payload."""
+    try:
+        parsed = sqlglot.parse(sql, read=source_dialect)
+    except (ParseError, TokenError, ValueError) as error:
+        return error_payload(error)
+
+    return {
+        "ok": True,
+        "statements_count": len(parsed),
+        "source_dialect": source_dialect,
+    }
+
+
+def transpile_payload(
+    sql: str,
+    *,
+    target_dialect: str,
+    source_dialect: str | None = None,
+    pretty: bool = True,
+) -> dict[str, Any]:
+    """Transpile SQL between dialects and return a structured payload."""
+    try:
+        statements = sqlglot.transpile(
+            sql,
+            read=source_dialect,
+            write=target_dialect,
+            pretty=pretty,
+        )
+    except (ParseError, TokenError, UnsupportedError, ValueError) as error:
+        return error_payload(error)
+
+    return {
+        "ok": True,
+        "source_dialect": source_dialect,
+        "target_dialect": target_dialect,
+        "statements": statements,
+    }
