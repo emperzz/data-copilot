@@ -81,6 +81,11 @@ class Paths:
         return self.base_dir / "dw_catalog.db"
 
     @property
+    def memory_chroma_dir(self) -> Path:
+        """Path to chroma memory persistence dir: `{base_dir}/memory_chroma`."""
+        return self.base_dir / "memory_chroma"
+
+    @property
     def user_md_file(self) -> Path:
         """Path to the global user profile file: `{base_dir}/USER.md`."""
         return self.base_dir / "USER.md"

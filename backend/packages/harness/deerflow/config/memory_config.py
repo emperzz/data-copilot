@@ -1,5 +1,7 @@
 """Configuration for memory mechanism."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -54,6 +56,24 @@ class MemoryConfig(BaseModel):
         ge=100,
         le=8000,
         description="Maximum tokens to use for memory injection",
+    )
+    provider: Literal["chroma"] = Field(
+        default="chroma",
+        description="Memory storage backend",
+    )
+    db_path: str = Field(
+        default="",
+        description=(
+            "Path to chroma persistence directory. "
+            "If empty, defaults to `{base_dir}/memory_chroma` (see Paths.memory_chroma_dir). "
+            "Absolute paths are used as-is. Relative paths are resolved against `Paths.base_dir`."
+        ),
+    )
+    vector_dimensions: int = Field(
+        default=256,
+        ge=32,
+        le=4096,
+        description="Embedding vector dimension for chroma memory store",
     )
 
 

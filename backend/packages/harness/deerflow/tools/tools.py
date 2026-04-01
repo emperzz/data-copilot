@@ -6,6 +6,10 @@ from deerflow.config import get_app_config
 from deerflow.reflection import resolve_variable
 from deerflow.tools.builtins import (
     ask_clarification_tool,
+    memory_delete,
+    memory_list_recent,
+    memory_search,
+    memory_upsert,
     present_file_tool,
     dw_catalog_ingest_sql,
     sql_check_syntax,
@@ -21,6 +25,10 @@ logger = logging.getLogger(__name__)
 BUILTIN_TOOLS = [
     present_file_tool,
     ask_clarification_tool,
+    memory_upsert,
+    memory_search,
+    memory_list_recent,
+    memory_delete,
     sql_check_syntax,
     sql_extract_metadata,
     sql_transpile,

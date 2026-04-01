@@ -28,6 +28,7 @@ dependencies = [
     "ddgs>=9.10.0",
     "duckdb>=1.4.4",
     "sqlglot",
+    "chromadb>=1.0.20",
     "langchain-google-genai>=4.2.1",
     "langgraph-checkpoint-sqlite>=3.0.3",
     "langgraph-sdk>=0.1.51",
