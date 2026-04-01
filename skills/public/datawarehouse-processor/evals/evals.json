@@ -1,0 +1,53 @@
+{
+  "skill_name": "datawarehouse-processor",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "这个SQL报错了，帮我检查一下语法：SELECT * FROM orders WHERE create_time = '2026-03-12' AND status = 'active'",
+      "expected_output": "应该使用sql_check_syntax工具检查SQL语法，并返回语法检查结果",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "帮我优化这个SQL，它运行太慢了：SELECT * FROM orders, users WHERE orders.user_id = users.id AND orders.create_time > '2026-03-01'",
+      "expected_output": "应该分析SQL性能问题，提供优化建议，可能建议使用显式JOIN代替隐式JOIN",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "帮我分析这个SQL的元数据并存储到数仓目录：WITH daily_sales AS (SELECT date, SUM(amount) as total FROM orders GROUP BY date) SELECT * FROM daily_sales WHERE total > 1000",
+      "expected_output": "应该使用sql_extract_metadata提取元数据，生成statement_notes_md，然后使用dw_catalog_ingest_sql存储，返回Ingest ID",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "把这个SQL转换成MySQL语法：SELECT substr(name, 1, 10) FROM users WHERE id != 0",
+      "expected_output": "应该使用sql_transpile工具将SQL转换为MySQL语法，substr应该转换为SUBSTRING，!=应该转换为<>",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "帮我生成一个SQL，查询最近7天的订单数量，按天分组，只统计已支付的订单",
+      "expected_output": "应该询问用户关于指标定义的详细信息（订单数量是去重计数还是行数），然后生成SQL",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "字段device_id是什么意思？它的数据来源是什么？",
+      "expected_output": "应该识别为查询定义请求，询问用户或通过API检索device_id的字段定义和血缘信息",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "这个SQL语法有问题吗？SELECT COUNT(DISTINCT user_id) FROM orders WHERE create_time BETWEEN '2026-03-01' AND '2026-03-31'",
+      "expected_output": "应该使用sql_check_syntax工具验证SQL语法",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "我想查询数仓中某个表的字段定义，这个表是orders，你能帮我查一下吗？",
+      "expected_output": "应该识别为查询定义请求，询问用户具体要查询哪些字段或查询整个表结构",
+      "files": []
+    }
+  ]
+}

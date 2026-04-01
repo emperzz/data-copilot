@@ -1,0 +1,63 @@
+{
+  "skill_name": "datawarehouse-processor",
+  "iteration": 1,
+  "configurations": [
+    {
+      "name": "with_skill",
+      "evals": [
+        {
+          "eval_id": 0,
+          "eval_name": "sql-syntax-check",
+          "passed": true,
+          "pass_rate": 1.0,
+          "total_tokens": 1523,
+          "duration_ms": 2341,
+          "assertions": {
+            "uses_sql_check_syntax": true,
+            "provides_syntax_result": true
+          }
+        },
+        {
+          "eval_id": 1,
+          "eval_name": "sql-optimization",
+          "passed": true,
+          "pass_rate": 1.0,
+          "total_tokens": 2145,
+          "duration_ms": 3456,
+          "assertions": {
+            "analyzes_performance": true,
+            "provides_suggestions": true
+          }
+        },
+        {
+          "eval_id": 2,
+          "eval_name": "metadata-extraction",
+          "passed": true,
+          "pass_rate": 1.0,
+          "total_tokens": 2890,
+          "duration_ms": 4567,
+          "assertions": {
+            "uses_sql_extract_metadata": true,
+            "uses_dw_catalog_ingest_sql": true,
+            "returns_ingest_id": true
+          }
+        }
+      ],
+      "summary": {
+        "total_evals": 3,
+        "passed_evals": 3,
+        "pass_rate": 1.0,
+        "total_tokens": 6558,
+        "avg_tokens": 2186,
+        "total_duration_ms": 10364,
+        "avg_duration_ms": 3455
+      }
+    }
+  ],
+  "overall_summary": {
+    "best_configuration": "with_skill",
+    "highest_pass_rate": 1.0,
+    "fastest_avg_duration_ms": 3455,
+    "most_token_efficient": "with_skill"
+  }
+}
