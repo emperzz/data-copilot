@@ -1,6 +1,7 @@
 """Middleware for intercepting clarification requests and presenting them to the user."""
 
 from collections.abc import Callable
+import json
 from typing import override
 
 from langchain.agents import AgentState
@@ -55,7 +56,7 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         question = args.get("question", "")
         clarification_type = args.get("clarification_type", "missing_info")
         context = args.get("context")
-        options = args.get("options", [])
+        options = self._normalize_options(args.get("options", []))
 
         # Type-specific icons
         type_icons = {
@@ -87,6 +88,32 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
                 message_parts.append(f"  {i}. {option}")
 
         return "\n".join(message_parts)
+
+    def _normalize_options(self, options: object) -> list[str]:
+        """Normalize clarification options into a list of strings.
+
+        The model should pass `options` as a list[str], but some providers occasionally
+        serialize it as a JSON string. Treating a string as an iterable would produce
+        one option per character, which renders as a broken numbered list.
+        """
+        if options is None:
+            return []
+
+        if isinstance(options, str):
+            try:
+                parsed = json.loads(options)
+            except json.JSONDecodeError:
+                return [options]
+
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed]
+
+            return [str(parsed)]
+
+        if isinstance(options, list):
+            return [str(item) for item in options]
+
+        return [str(options)]
 
     def _handle_clarification(self, request: ToolCallRequest) -> Command:
         """Handle clarification request and return command to interrupt execution.

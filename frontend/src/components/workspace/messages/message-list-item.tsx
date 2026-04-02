@@ -49,7 +49,7 @@ export function MessageListItem({
       from={isHuman ? "user" : "assistant"}
     >
       <MessageContent
-        className={isHuman ? "w-fit" : "w-full"}
+        className={isHuman ? "w-full" : "w-full"}
         message={message}
         isLoading={isLoading}
       />
@@ -183,9 +183,7 @@ function MessageContent_({
 
   if (isHuman) {
     const messageResponse = contentToDisplay ? (
-      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-        {contentToDisplay}
-      </div>
+      <div className="whitespace-pre-wrap break-words">{contentToDisplay}</div>
     ) : null;
     return (
       <div className={cn("ml-auto flex flex-col gap-2", className)}>
