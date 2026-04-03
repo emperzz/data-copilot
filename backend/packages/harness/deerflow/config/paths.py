@@ -33,8 +33,10 @@ class Paths:
     BaseDir resolution (in priority order):
         1. Constructor argument `base_dir`
         2. DEER_FLOW_HOME environment variable
-        3. Local dev fallback: cwd/.deer-flow  (when cwd is the backend/ dir)
-        4. Default: $HOME/.deer-flow
+        3. Monorepo backend root: ancestor dir containing ``packages/harness`` and ``pyproject.toml``
+           → ``{that_dir}/.deer-flow`` (covers cwd under ``backend/`` including ``packages/harness``)
+        4. Single-package fallback: ``cwd/.deer-flow`` when ``cwd/pyproject.toml`` exists
+        5. Default: $HOME/.deer-flow
     """
 
     def __init__(self, base_dir: str | Path | None = None) -> None:
@@ -65,7 +67,16 @@ class Paths:
             return Path(env_home).resolve()
 
         cwd = Path.cwd()
-        if cwd.name == "backend" or (cwd / "pyproject.toml").exists():
+        if cwd.name == "backend":
+            return cwd / ".deer-flow"
+
+        # Monorepo: backend root contains packages/harness. Do not treat
+        # backend/packages/harness (which has its own pyproject.toml) as the data root.
+        for d in [cwd, *cwd.parents]:
+            if (d / "packages" / "harness").is_dir() and (d / "pyproject.toml").exists():
+                return d / ".deer-flow"
+
+        if (cwd / "pyproject.toml").exists():
             return cwd / ".deer-flow"
 
         return Path.home() / ".deer-flow"
