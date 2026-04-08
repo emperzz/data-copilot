@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +12,24 @@ import pytest
 
 from deerflow.memory import MemoryRepository, reset_memory_repository
 from deerflow.tools.builtins import memory_tool as memory_tool_module
+
+_FAKE_EMBED_DIM = 64
+
+
+def _fake_embed(text: str, dimensions: int) -> list[float]:
+    source = text.strip() or "empty"
+    vec = [0.0] * dimensions
+    for token in source.lower().split():
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        slot = int.from_bytes(digest[:4], "big") % dimensions
+        sign = 1.0 if digest[4] % 2 == 0 else -1.0
+        magnitude = (digest[5] / 255.0) + 0.05
+        vec[slot] += sign * magnitude
+
+    norm = math.sqrt(sum(v * v for v in vec))
+    if norm == 0:
+        return vec
+    return [v / norm for v in vec]
 
 
 class _FakeCollection:
@@ -22,9 +42,16 @@ class _FakeCollection:
         ids: list[str],
         documents: list[str],
         metadatas: list[dict],
-        embeddings: list[list[float]],
+        embeddings: list[list[float]] | None = None,
     ) -> None:
-        for memory_id, document, metadata, embedding in zip(ids, documents, metadatas, embeddings, strict=True):
+        for i, memory_id in enumerate(ids):
+            document = documents[i]
+            metadata = metadatas[i]
+            embedding = (
+                embeddings[i]
+                if embeddings is not None
+                else _fake_embed(document, _FAKE_EMBED_DIM)
+            )
             self._rows[memory_id] = {
                 "id": memory_id,
                 "document": document,
@@ -48,7 +75,8 @@ class _FakeCollection:
     def query(
         self,
         *,
-        query_embeddings: list[list[float]],
+        query_embeddings: list[list[float]] | None = None,
+        query_texts: list[str] | None = None,
         n_results: int,
         where=None,  # noqa: ANN001
         include=None,  # noqa: ANN001
@@ -56,7 +84,12 @@ class _FakeCollection:
         rows = list(self._rows.values())
         if where is not None:
             rows = [r for r in rows if _match_where(r["metadata"], where)]
-        query_vec = query_embeddings[0]
+        if query_texts is not None:
+            query_vec = _fake_embed(query_texts[0], _FAKE_EMBED_DIM)
+        elif query_embeddings is not None:
+            query_vec = query_embeddings[0]
+        else:
+            raise ValueError("query_embeddings or query_texts required")
         scored = []
         for row in rows:
             distance = _cosine_distance(query_vec, row["embedding"])
@@ -81,7 +114,7 @@ class _FakePersistentClient:
     def __init__(self, path: str) -> None:  # noqa: ARG002
         pass
 
-    def get_or_create_collection(self, *, name: str) -> _FakeCollection:
+    def get_or_create_collection(self, *, name: str, embedding_function=None) -> _FakeCollection:  # noqa: ANN001, ARG002
         if name not in self._collections:
             self._collections[name] = _FakeCollection()
         return self._collections[name]
@@ -109,12 +142,22 @@ def _cosine_distance(left: list[float], right: list[float]) -> float:
 @pytest.fixture
 def fake_chroma(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakePersistentClient._collections = {}
-    monkeypatch.setitem(sys.modules, "chromadb", SimpleNamespace(PersistentClient=_FakePersistentClient))
+    ef_mod = types.ModuleType("chromadb.utils.embedding_functions")
+
+    def _dummy_ef() -> object:
+        return object()
+
+    ef_mod.DefaultEmbeddingFunction = _dummy_ef
+    utils_mod = types.ModuleType("chromadb.utils")
+    chromadb_mod = SimpleNamespace(PersistentClient=_FakePersistentClient)
+    monkeypatch.setitem(sys.modules, "chromadb.utils.embedding_functions", ef_mod)
+    monkeypatch.setitem(sys.modules, "chromadb.utils", utils_mod)
+    monkeypatch.setitem(sys.modules, "chromadb", chromadb_mod)
     reset_memory_repository()
 
 
 def test_memory_repository_upsert_list_and_metadata(fake_chroma: None, tmp_path: Path) -> None:
-    repo = MemoryRepository(db_path=tmp_path / "memory_chroma", vector_dimensions=32)
+    repo = MemoryRepository(db_path=tmp_path / "memory_chroma")
     repo.ensure_schema()
     item = repo.upsert_memory(
         namespace="skill:datawarehouse-processor",
@@ -135,7 +178,7 @@ def test_memory_repository_upsert_list_and_metadata(fake_chroma: None, tmp_path:
 
 
 def test_memory_repository_upsert_with_key_is_idempotent(fake_chroma: None, tmp_path: Path) -> None:
-    repo = MemoryRepository(db_path=tmp_path / "memory_chroma", vector_dimensions=32)
+    repo = MemoryRepository(db_path=tmp_path / "memory_chroma")
     repo.ensure_schema()
 
     first = repo.upsert_memory(
@@ -158,7 +201,7 @@ def test_memory_repository_upsert_with_key_is_idempotent(fake_chroma: None, tmp_
 
 
 def test_memory_repository_search_and_delete(fake_chroma: None, tmp_path: Path) -> None:
-    repo = MemoryRepository(db_path=tmp_path / "memory_chroma", vector_dimensions=64)
+    repo = MemoryRepository(db_path=tmp_path / "memory_chroma")
     repo.ensure_schema()
     target = repo.upsert_memory(
         namespace="skill:datawarehouse-processor",
@@ -188,7 +231,7 @@ def test_memory_repository_search_and_delete(fake_chroma: None, tmp_path: Path) 
 
 
 def test_memory_tool_upsert_and_search(fake_chroma: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = MemoryRepository(db_path=tmp_path / "memory_chroma", vector_dimensions=32)
+    repo = MemoryRepository(db_path=tmp_path / "memory_chroma")
     repo.ensure_schema()
     monkeypatch.setattr(memory_tool_module, "get_memory_repository", lambda: repo)
 

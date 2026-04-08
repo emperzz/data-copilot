@@ -27,14 +27,19 @@ def memory_upsert(
     source_skill: str | None = None,
     metadata_json: str | None = None,
 ) -> str:
-    """Create or update one memory item in a namespace.
+    """Upsert a single Chroma-backed memory item (document) scoped by `namespace`.
 
     Args:
-        namespace: Logical namespace (for example: "skill:datawarehouse-processor").
-        content: Memory content text to store.
-        memory_key: Optional business key for idempotent upsert.
-        source_skill: Optional skill name that produced this memory.
-        metadata_json: Optional metadata JSON object string.
+        namespace: Required scope key (example: "skill:datawarehouse-processor").
+        content: Document text stored in the collection.
+        memory_key: Optional idempotency key within the same namespace; if it exists, the item is updated in-place.
+        source_skill: Optional producer identifier stored in metadata.
+        metadata_json: Optional user metadata as a JSON object string (must be a JSON dict); returned as `item.metadata.extra`.
+
+    Returns:
+        JSON string:
+        - ok: bool
+        - item: MemoryItem (id, content, metadata{namespace,memory_key,source_skill,extra}, created_at, updated_at)
     """
     metadata = _parse_metadata_json(metadata_json)
     item = get_memory_repository().upsert_memory(
@@ -55,12 +60,20 @@ def memory_upsert(
 
 @tool("memory_search", parse_docstring=True)
 def memory_search(namespace: str, query: str, limit: int = 5) -> str:
-    """Search memory items from one namespace by semantic similarity.
+    """Semantic search over documents in one `namespace` using Chroma's embedding function.
 
     Args:
-        namespace: Logical namespace.
-        query: Search query text.
-        limit: Maximum number of hits to return.
+        namespace: Required scope key (same as `memory_upsert`).
+        query: Natural language query text. Chroma embeds the query and retrieves nearest documents.
+        limit: Maximum hits to return.
+
+    Returns:
+        JSON string:
+        - ok: bool
+        - hits: list of { score: float, item: MemoryItem }
+
+        Notes:
+        - score is computed as 1/(1+distance); higher is more similar.
     """
     hits = get_memory_repository().search(namespace=namespace, query=query, limit=limit)
     return json.dumps(
@@ -80,11 +93,16 @@ def memory_search(namespace: str, query: str, limit: int = 5) -> str:
 
 @tool("memory_list_recent", parse_docstring=True)
 def memory_list_recent(namespace: str, limit: int = 20) -> str:
-    """List recent memory items in one namespace.
+    """List memory items in one `namespace`, ordered by `updated_at` descending.
 
     Args:
-        namespace: Logical namespace.
-        limit: Maximum number of items.
+        namespace: Required scope key (same as `memory_upsert`).
+        limit: Maximum number of items to return.
+
+    Returns:
+        JSON string:
+        - ok: bool
+        - items: list[MemoryItem]
     """
     items = get_memory_repository().list_memories(namespace=namespace, limit=limit)
     return json.dumps(
@@ -98,10 +116,15 @@ def memory_list_recent(namespace: str, limit: int = 20) -> str:
 
 @tool("memory_delete", parse_docstring=True)
 def memory_delete(memory_id: str) -> str:
-    """Delete one memory item by id.
+    """Delete one memory item by id (collection-wide).
 
     Args:
         memory_id: Memory item id.
+
+    Returns:
+        JSON string:
+        - ok: bool
+        - deleted: bool (True if the id existed and was deleted)
     """
     deleted = get_memory_repository().delete_memory(memory_id)
     return json.dumps({"ok": True, "deleted": deleted}, ensure_ascii=False)

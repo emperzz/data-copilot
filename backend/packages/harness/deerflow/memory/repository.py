@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import math
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,7 +12,8 @@ from deerflow.config.memory_config import get_memory_config
 from deerflow.config.paths import get_paths
 from deerflow.memory.models import MemoryItem, MemoryMetadata, MemorySearchHit
 
-_COLLECTION_NAME = "skill_memory"
+# Distinct from legacy hash-vector collection "skill_memory" (pre–DefaultEmbeddingFunction).
+_COLLECTION_NAME = "skill_memory_v2"
 
 
 def _utc_now() -> datetime:
@@ -31,24 +30,8 @@ def _dt_from_iso(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def _hash_embed(text: str, dimensions: int) -> list[float]:
-    source = text.strip() or "empty"
-    vec = [0.0] * dimensions
-    for token in source.lower().split():
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        slot = int.from_bytes(digest[:4], "big") % dimensions
-        sign = 1.0 if digest[4] % 2 == 0 else -1.0
-        magnitude = (digest[5] / 255.0) + 0.05
-        vec[slot] += sign * magnitude
-
-    norm = math.sqrt(sum(v * v for v in vec))
-    if norm == 0:
-        return vec
-    return [v / norm for v in vec]
-
-
 class MemoryRepository:
-    def __init__(self, db_path: Path | None = None, vector_dimensions: int | None = None) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         config = get_memory_config()
         if db_path is not None:
             self._db_path = db_path
@@ -58,20 +41,19 @@ class MemoryRepository:
         else:
             self._db_path = get_paths().memory_chroma_dir
 
-        self._vector_dimensions = vector_dimensions if vector_dimensions is not None else config.vector_dimensions
-
-    def _build_embedding(self, text: str) -> list[float]:
-        return _hash_embed(text, self._vector_dimensions)
-
     def _get_collection(self):
         try:
             import chromadb  # type: ignore
+            from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
         except ImportError as exc:
             raise RuntimeError("chromadb is required for memory provider 'chroma'") from exc
 
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         client = chromadb.PersistentClient(path=str(self._db_path))
-        return client.get_or_create_collection(name=_COLLECTION_NAME)
+        return client.get_or_create_collection(
+            name=_COLLECTION_NAME,
+            embedding_function=DefaultEmbeddingFunction(),
+        )
 
     def ensure_schema(self) -> None:
         self._get_collection()
@@ -146,7 +128,6 @@ class MemoryRepository:
             ids=[memory_id],
             documents=[content],
             metadatas=[chroma_metadata],
-            embeddings=[self._build_embedding(content)],
         )
 
         return self._to_item(memory_id, content, chroma_metadata)
@@ -172,7 +153,7 @@ class MemoryRepository:
             return []
         collection = self._get_collection()
         result = collection.query(
-            query_embeddings=[self._build_embedding(query)],
+            query_texts=[query],
             n_results=limit,
             where={"namespace": namespace},
             include=["documents", "metadatas", "distances"],

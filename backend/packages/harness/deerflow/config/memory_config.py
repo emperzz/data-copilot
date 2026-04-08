@@ -69,12 +69,6 @@ class MemoryConfig(BaseModel):
             "Absolute paths are used as-is. Relative paths are resolved against `Paths.base_dir`."
         ),
     )
-    vector_dimensions: int = Field(
-        default=256,
-        ge=32,
-        le=4096,
-        description="Embedding vector dimension for chroma memory store",
-    )
 
 
 # Global configuration instance

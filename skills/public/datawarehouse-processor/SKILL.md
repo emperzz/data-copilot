@@ -5,11 +5,16 @@ description: 面向用户数仓的统一管理工具。只要用户的需求与�
 
 # Data Warehouse Processor
 
-## 记忆文件位置（必须使用）
+## 记忆存储（Chroma，必须使用）
 
 - 技能目录：`skills/public/datawarehouse-processor/`
-- 记忆存储：必须通过内置记忆工具写入/检索（禁止直接读写 `MEMORY.md` 或 `memory/YYYY-MM-DD.md` 这类文件）
-- 记忆命名空间（固定值）：`skill:datawarehouse-processor`
+- 持久化：内置记忆工具由 Chroma 管理（collection 内按 **document + metadata** 存储）；**禁止**直接读写仓库里的任意 `MEMORY.md`、`memory/*.md` 或自造 JSON 文件来充当本技能记忆。
+- **命名空间（固定值）**：`skill:datawarehouse-processor`。实现上等价于 Chroma 元数据过滤 `namespace`，**检索与列表不会跨命名空间**。
+- **工具与返回物**（JSON 字符串，需解析后使用）：
+  - `memory_upsert` → `{ ok, item }`。`item` 含 `id`、`content`、`metadata`（`namespace`、`memory_key`、`source_skill`、`extra`）、`created_at`、`updated_at`。`metadata_json` 会进入 `metadata.extra`。
+  - `memory_search` → `{ ok, hits[] }`。每项为 `{ score, item }`；`score` 由向量距离变换而来（越大越相近），**语义检索**依赖 Chroma 的默认嵌入。
+  - `memory_list_recent` → `{ ok, items[] }`，按 **`updated_at` 降序**（不是插入顺序）。
+  - `memory_delete` → `{ ok, deleted }`，按 **`item.id`** 删除。
 
 ## 核心定位
 
@@ -27,7 +32,7 @@ description: 面向用户数仓的统一管理工具。只要用户的需求与�
 
 1. 开始任何 SQL 处理前，必须先用 `memory_search(namespace, query, limit)` 检索命名空间 `skill:datawarehouse-processor` 的相关记忆。
 2. 仅当 `memory_search` 命中但信息不完整时，再用 `memory_list_recent(namespace, limit)` 获取最近记录补齐上下文（或进一步调整 query 再次 `memory_search`）。
-3. SQL 引擎判断优先依据 `MEMORY.md` 的历史描述与用户新增描述。
+3. SQL 引擎判断优先依据命名空间 `skill:datawarehouse-processor` 中已沉淀的记忆（尤其 `memory_key="core"` 与当日 `daily:YYYY-MM-DD`）以及用户本轮描述。
 4. 除非你非常确定，否则必须向用户确认推断出的引擎；若无法判断，直接询问用户。
 5. 禁止使用通用 SQL 解析作为引擎识别依据。
 6. 对用户输入的 SQL，优先调用 `sql_check_syntax` 做语法校验。
@@ -62,10 +67,10 @@ description: 面向用户数仓的统一管理工具。只要用户的需求与�
 #### 读取方式（强制）
 
 1. 调用 `memory_search(namespace="skill:datawarehouse-processor", query="<当前任务关键词>", limit=5)`。
-2. 从返回的 `hits` 中提取与引擎、表、字段、指标、血缘、业务口径相关的记忆项内容与元数据。
+2. 解析 JSON，从 `hits` 中优先阅读 **`score` 较高** 的条目；每条取 `item.content` 与 `item.metadata`（含 `memory_key`、`source_skill`、`extra`）。
 3. 若命中信息完整，直接进入后续步骤。
 4. 若命中但信息不完整：
-   - 调用 `memory_list_recent(namespace="skill:datawarehouse-processor", limit=20)` 获取最近记忆；
+   - 调用 `memory_list_recent(namespace="skill:datawarehouse-processor", limit=20)`（按 **`updated_at` 最近**优先）；
    - 或调整 query 后再次 `memory_search`（例如加上表名/指标名/系统名/引擎名）。
 
 ### Step 1 - 识别任务类型
@@ -149,9 +154,9 @@ description: 面向用户数仓的统一管理工具。只要用户的需求与�
 - 用户提供新的业务背景、口径定义、数据分表原因、平台差异说明。
 - 新确认的引擎、方言、表关系、字段语义、指标计算规则。
 
-## MEMORY.md 写入规范（全局总结）
+## 长期核心记忆 content 结构（写入 `memory_key="core"`）
 
-每次更新“长期核心事实”建议使用以下结构组织 `content`（写入 `memory_key="core"`）：
+每次更新“长期核心事实”建议使用以下结构组织 `memory_upsert` 的 `content` 参数：
 
 ```markdown
 ## YYYY-MM-DD - <topic>
@@ -165,7 +170,7 @@ description: 面向用户数仓的统一管理工具。只要用户的需求与�
 
 ## 当日明细写入规范（当日会话明细）
 
-当日明细写入到 `memory_key="daily:YYYY-MM-DD"`（例如 `daily:2026-03-31`）。
+当日明细写入到 **`memory_upsert` 的 `memory_key="daily:YYYY-MM-DD"`**（例如 `daily:2026-03-31`）；同日多次写入会 **覆盖** 同一 key 下的一条记录（幂等），应把内容写全。
 
 ```markdown
 ## HH:MM - <task tag>
@@ -189,7 +194,7 @@ description: 面向用户数仓的统一管理工具。只要用户的需求与�
 1. 先说明当前使用的引擎推断和确认状态。
 2. 对 SQL 请求先给语法校验结论。
 3. 再给后续处理结果或所需补充信息。
-4. 明确标注哪些结论来自 `MEMORY.md`、哪些来自 `memory/YYYY-MM-DD.md`、哪些来自本轮新增输入。
+4. 明确标注哪些结论来自 **已检索的 Chroma 记忆**（说明大致来源：`memory_key` 或 `memory_search` 命中摘要）、哪些来自 **本轮用户输入**。
 
 ## 输出模板
 
@@ -218,5 +223,5 @@ description: 面向用户数仓的统一管理工具。只要用户的需求与�
 - 不猜测未提供的业务口径。
 - 不跳过引擎确认直接做方言敏感改写。
 - 不在未校验语法时直接进入复杂优化。
-- 不遗漏 `MEMORY.md` 与 `memory/YYYY-MM-DD.md` 的更新。
-- `memory/YYYY-MM-DD.md` 必须保留当日更多细节，不能只复制 `MEMORY.md` 的摘要。
+- 不遗漏 **`memory_upsert` 两层记忆**（`memory_key="core"` 与 `daily:YYYY-MM-DD`）的更新。
+- `daily:YYYY-MM-DD` 条目的 `content` 必须比 `core` **更细**（会话细节、中间结论、待办），不能只复述 `core` 的摘要。
