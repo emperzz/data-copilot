@@ -1,5 +1,5 @@
 ---
-description: DeerFlow 二次开发核心依据（架构边界、工程规范、环境一致性、质量门禁与迭代流程）
+description: DeerFlow 二次开发核心依据（架构边界、工程规范、环境一致性、质量门禁、upstream 同步与迭代流程）
 alwaysApply: true
 ---
 
@@ -72,6 +72,8 @@ alwaysApply: true
 - 前端类型：`cd frontend && pnpm typecheck`
 
 任何失败都应先修复再继续开发，不跳过。
+
+- 自 `upstream/main` 延续的开发分支在**合并 upstream 之后**，同样必须满足本节门禁（见 **§10.4**）。
 
 ## 4. 环境一致性（避免“我这能跑”）
 
@@ -165,3 +167,39 @@ alwaysApply: true
 - 禁止将临时调试逻辑、密钥、路径硬编码提交。
 - 禁止跨模块复制粘贴相同业务逻辑（应抽象复用）。
 - 禁止跳过验证直接宣称完成。
+- 禁止在 upstream 合并存在 **Git 冲突** 或 **§10.1 语义层面高风险** 时，未经用户明确确认擅自解决冲突或选定取舍方案。
+
+## 10. 上游（upstream）定期同步与合并
+
+本仓库在官方 DeerFlow 基础上二次开发：远程 `upstream` 指向原项目主仓，`rewrite/from-upstream`（或当前约定开发分支）在 **`upstream/main` 最新节点** 上延续功能。需**定期**拉取 upstream 并合并，保持与安全修复、依赖与框架演进对齐。
+
+**每次**准备合入 upstream 最新代码前，须先完成 **§10.1** 的检查与结论；不得在未经分析的情况下直接合并。
+
+### 10.1 合并前检查（必须先做）
+
+1. `git fetch upstream`（以及 `git fetch origin`，视需要）。
+2. 审阅尚未合入的 upstream 提交：`git log --oneline HEAD..upstream/main`（必要时 `--stat` / 单提交 `git show`）。
+3. 识别**与当前分支二次开发代码可能重叠**的变更（文件级：`git diff --name-status HEAD...upstream/main`），并对照本分支近期二开涉及模块做**影响评估**。典型高风险区包括但不限于：`backend/packages/harness/deerflow/` 核心逻辑、`backend/app/gateway/`、`frontend/src/core/` 与 workspace 相关 UI、`config.example.yaml`、`backend/**/pyproject.toml`、`backend/uv.lock`、双方都曾改过的中间件/模型工厂等。
+4. **与二开是否冲突的结论**：
+   - **Git 层面**：优先用只读方式预判（例如 `git merge-tree $(git merge-base HEAD upstream/main) HEAD upstream/main` 输出中是否出现冲突标记；或 `git merge --no-commit --no-ff upstream/main` 预演后 `git merge --abort`）。若工具不可用，则基于重叠文件与提交说明做风险评估。
+   - **语义层面**：即使自动合并无冲突，若 upstream 修改了二开依赖的行为契约（API、配置项、状态字段、工具入参等），仍视为**高风险**，按 **§10.3** 处理而非默认可直接合并。
+
+### 10.2 无冲突且风险可接受时
+
+- 当 **§10.1** 结论为：预演无冲突（或等价判断），且**不会实质性破坏或覆盖当前分支的二开契约与关键路径**（重叠仅为无关模块、文档-only、或已确认对二开无行为影响），则**可直接执行** `git merge upstream/main`（合并策略以团队约定为准；保留清晰的 merge commit 信息便于追溯）。
+- 合并完成后**必须**执行 **§10.4** 验证。
+
+### 10.3 存在冲突或高风险重叠时（须用户确认后再动手）
+
+- **禁止**在未获用户明确指示前擅自解决冲突或选定取舍方案。
+- 须向用户说明：**冲突文件列表**、**冲突原因**（例如与历史 fork 合并、同文件双端演进、依赖/锁文件分叉）、**影响程度**（运行时、测试、配置、数据路径等）以及 **2～3 条可选处理方案**（例如：以 upstream 为准并手工补回二开、以本地为准并 cherry-pick 上游补丁、分段合并等）。
+- **待用户回复选定方案后**，再执行合并、解决冲突与提交。
+
+### 10.4 合并后验证（必须执行）
+
+merge 完成后运行质量门禁，确认合并结果可用：
+
+- 后端：`cd backend && uv run pytest tests/ -v` 与 `cd backend && uvx ruff check .`
+- 前端：`cd frontend && pnpm lint` 与 `cd frontend && pnpm typecheck`
+
+任一项失败须先修复再继续开发；不得在未通过验证时宣称同步完成。
