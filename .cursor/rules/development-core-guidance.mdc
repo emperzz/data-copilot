@@ -171,7 +171,26 @@ alwaysApply: true
 
 ## 10. 上游（upstream）定期同步与合并
 
-本仓库在官方 DeerFlow 基础上二次开发：远程 `upstream` 指向原项目主仓，`rewrite/from-upstream`（或当前约定开发分支）在 **`upstream/main` 最新节点** 上延续功能。需**定期**拉取 upstream 并合并，保持与安全修复、依赖与框架演进对齐。
+### 10.0 上游来源与历史二开分支
+
+- **官方上游仓库**：https://github.com/bytedance/deer-flow  
+- **Git 远程约定**：远程名一般为 `upstream`，跟踪分支为 **`upstream/main`**。若本地尚未配置：`git remote add upstream https://github.com/bytedance/deer-flow.git`。
+- **当前从新基线延续开发的分支**：**`rewrite/from-upstream`**（自 `upstream/main` 最新节点切出，用于后续二开）。
+- **此前二次开发代码所在分支**：以 **`chore/sync-upstream-20260408`** 为主线（含与 `upstream/main` 的 merge 及冲突解决记录）。Fork 的 **`main`** 可能与该线部分重合，具体以 `git log origin/main` / `git log chore/sync-upstream-20260408` 为准。
+
+**此前二开涉及的主要能力域**（切至 `rewrite/from-upstream` 之前，已在上述分支中落地的方向；按提交主题归纳，**非穷尽**，合并时仍以 **§10.1** 的当下差异为准）：
+
+- **数据仓库目录（dw-catalog）**：SQLite 目录存储、SQL 解析与 ingest、目录 schema 演进、物理表血缘、WITH 包裹 INSERT 的血缘修正、按语句 Markdown 备注等。
+- **SQL 工具与解析**：内置 SQL 工具与文档、sqlglot 相关逻辑向 metadata 等模块的整理。
+- **Memory / Skill 记忆**：Chroma 默认向量与配置、Chroma 支撑的 skill memory 工具与 repository 层等。
+- **Skill**：`datawarehouse-processor` 技能文档与记忆工作流等。
+- **工程与体验补丁**：后端路径（如 `.deer-flow` 在 `packages/harness` 为 cwd 时的解析）、澄清选项 JSON 字符串归一化与用户消息展示、模型工厂 `reasoning_effort` 与配置合并去重等。
+
+若需从旧线恢复或对照实现，建议以 **`chore/sync-upstream-20260408`** 为参考分支做 **cherry-pick** 或 **分模块移植**，避免将整条 fork 历史再次整体 merge 进新基线。
+
+---
+
+本仓库在官方 DeerFlow 基础上二次开发，需**定期**拉取 `upstream` 并合并入当前开发分支，保持与安全修复、依赖与框架演进对齐。
 
 **每次**准备合入 upstream 最新代码前，须先完成 **§10.1** 的检查与结论；不得在未经分析的情况下直接合并。
 
