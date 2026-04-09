@@ -59,8 +59,6 @@ class MemoryConfig(BaseModel):
         le=8000,
         description="Maximum tokens to use for memory injection",
     )
-
-
 # Global configuration instance
 _memory_config: MemoryConfig = MemoryConfig()
 
