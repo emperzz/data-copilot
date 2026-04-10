@@ -1,4 +1,4 @@
-"""ChromaDB-backed layered memory repository."""
+"""ChromaDB-backed structured memory repository."""
 
 from __future__ import annotations
 
@@ -50,8 +50,8 @@ def _json_to_string_list(raw: Any) -> list[str]:
     return [str(item) for item in parsed if isinstance(item, str)]
 
 
-def _resolve_layered_persist_directory() -> Path:
-    """Resolve layered memory storage directory using memory.json path rules."""
+def _resolve_structured_persist_directory() -> Path:
+    """Resolve structured memory storage directory using memory.json path rules."""
     config = get_memory_config()
     if config.storage_path:
         memory_file = Path(config.storage_path)
@@ -62,8 +62,8 @@ def _resolve_layered_persist_directory() -> Path:
     return memory_file.parent / "chromadb"
 
 
-class LayeredMemoryRepository:
-    """Repository for raw/distilled/core memory tiers."""
+class StructuredMemoryRepository:
+    """Repository for raw/distilled/core structured memory tiers."""
 
     def __init__(
         self,
@@ -303,18 +303,18 @@ class LayeredMemoryRepository:
         )
 
 
-_repository_instance: LayeredMemoryRepository | None = None
+_repository_instance: StructuredMemoryRepository | None = None
 _repository_lock = threading.Lock()
 
 
-def get_layered_memory_repository() -> LayeredMemoryRepository:
-    """Return global layered memory repository singleton."""
+def get_structured_memory_repository() -> StructuredMemoryRepository:
+    """Return global structured memory repository singleton."""
     global _repository_instance
     if _repository_instance is not None:
         return _repository_instance
     with _repository_lock:
         if _repository_instance is None:
-            _repository_instance = LayeredMemoryRepository(
-                persist_directory=_resolve_layered_persist_directory(),
+            _repository_instance = StructuredMemoryRepository(
+                persist_directory=_resolve_structured_persist_directory(),
             )
     return _repository_instance

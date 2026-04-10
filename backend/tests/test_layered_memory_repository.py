@@ -1,16 +1,16 @@
-"""Tests for ChromaDB layered memory repository."""
+"""Tests for ChromaDB structured memory repository."""
 
 import pytest
 
 from deerflow.memory.models import RawMemoryKind
-from deerflow.memory.repository import LayeredMemoryRepository
+from deerflow.memory.repository import StructuredMemoryRepository
 
 
-class TestLayeredMemoryRepository:
+class TestStructuredMemoryRepository:
     """Validate raw/distilled/core memory persistence behavior."""
 
     def test_create_raw_session_memory(self, tmp_path):
-        repository = LayeredMemoryRepository(
+        repository = StructuredMemoryRepository(
             persist_directory=tmp_path / "chroma",
             default_user="test-user",
             default_source_agent="test-agent",
@@ -44,7 +44,7 @@ class TestLayeredMemoryRepository:
         ],
     )
     def test_create_raw_with_source_links(self, tmp_path, raw_kind, source_field, source_value):
-        repository = LayeredMemoryRepository(persist_directory=tmp_path / "chroma")
+        repository = StructuredMemoryRepository(persist_directory=tmp_path / "chroma")
 
         create_kwargs = {
             "content": f"raw content for {raw_kind.value}",
@@ -58,7 +58,7 @@ class TestLayeredMemoryRepository:
         assert getattr(loaded, source_field) == source_value
 
     def test_create_distilled_with_raw_links(self, tmp_path):
-        repository = LayeredMemoryRepository(persist_directory=tmp_path / "chroma")
+        repository = StructuredMemoryRepository(persist_directory=tmp_path / "chroma")
         raw_a = repository.create_raw_memory(
             content="first raw note",
             raw_kind=RawMemoryKind.SESSION,
@@ -84,7 +84,7 @@ class TestLayeredMemoryRepository:
         assert loaded.tags == ["distilled"]
 
     def test_create_core_with_distilled_links(self, tmp_path):
-        repository = LayeredMemoryRepository(persist_directory=tmp_path / "chroma")
+        repository = StructuredMemoryRepository(persist_directory=tmp_path / "chroma")
         raw = repository.create_raw_memory(
             content="raw memory for core test",
             raw_kind=RawMemoryKind.FILE,
@@ -111,7 +111,7 @@ class TestLayeredMemoryRepository:
         assert loaded.tags == ["core"]
 
     def test_create_raw_requires_matching_source_link(self, tmp_path):
-        repository = LayeredMemoryRepository(persist_directory=tmp_path / "chroma")
+        repository = StructuredMemoryRepository(persist_directory=tmp_path / "chroma")
 
         with pytest.raises(ValueError):
             repository.create_raw_memory(
@@ -120,7 +120,7 @@ class TestLayeredMemoryRepository:
             )
 
     def test_create_distilled_requires_raw_links(self, tmp_path):
-        repository = LayeredMemoryRepository(persist_directory=tmp_path / "chroma")
+        repository = StructuredMemoryRepository(persist_directory=tmp_path / "chroma")
 
         with pytest.raises(ValueError):
             repository.create_distilled_memory(
@@ -129,7 +129,7 @@ class TestLayeredMemoryRepository:
             )
 
     def test_create_core_requires_distilled_links(self, tmp_path):
-        repository = LayeredMemoryRepository(persist_directory=tmp_path / "chroma")
+        repository = StructuredMemoryRepository(persist_directory=tmp_path / "chroma")
 
         with pytest.raises(ValueError):
             repository.create_core_memory(

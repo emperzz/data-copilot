@@ -1,4 +1,4 @@
-"""Layered memory management components."""
+"""Structured memory management components."""
 
 from deerflow.memory.models import (
     DEFAULT_MEMORY_AGENT,
@@ -9,7 +9,10 @@ from deerflow.memory.models import (
     RawMemoryKind,
     RawMemoryRecord,
 )
-from deerflow.memory.repository import LayeredMemoryRepository, get_layered_memory_repository
+from deerflow.memory.repository import (
+    StructuredMemoryRepository,
+    get_structured_memory_repository,
+)
 
 __all__ = [
     "DEFAULT_MEMORY_AGENT",
@@ -19,6 +22,6 @@ __all__ = [
     "RawMemoryRecord",
     "DistilledMemoryRecord",
     "CoreMemoryRecord",
-    "LayeredMemoryRepository",
-    "get_layered_memory_repository",
+    "StructuredMemoryRepository",
+    "get_structured_memory_repository",
 ]
