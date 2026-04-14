@@ -9,9 +9,11 @@ from deerflow.memory.models import (
     RawMemoryRecord,
     TITLE_MAX_LENGTH,
 )
+from deerflow.config.structured_memory_config import StructuredMemoryDisabledError
 from deerflow.memory.repository import (
     StructuredMemoryRepository,
     get_structured_memory_repository,
+    reset_structured_memory_repository_singleton,
 )
 
 __all__ = [
@@ -23,5 +25,7 @@ __all__ = [
     "DistilledMemoryRecord",
     "CoreMemoryRecord",
     "StructuredMemoryRepository",
+    "StructuredMemoryDisabledError",
     "get_structured_memory_repository",
+    "reset_structured_memory_repository_singleton",
 ]

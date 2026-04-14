@@ -14,6 +14,10 @@ from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpo
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_config_from_dict
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
+from deerflow.config.structured_memory_config import (
+    StructuredMemoryConfig,
+    load_structured_memory_config_from_dict,
+)
 from deerflow.config.model_config import ModelConfig
 from deerflow.config.sandbox_config import SandboxConfig
 from deerflow.config.skill_evolution_config import SkillEvolutionConfig
@@ -61,6 +65,10 @@ class AppConfig(BaseModel):
     title: TitleConfig = Field(default_factory=TitleConfig, description="Automatic title generation configuration")
     summarization: SummarizationConfig = Field(default_factory=SummarizationConfig, description="Conversation summarization configuration")
     memory: MemoryConfig = Field(default_factory=MemoryConfig, description="Memory subsystem configuration")
+    structured_memory: StructuredMemoryConfig = Field(
+        default_factory=StructuredMemoryConfig,
+        description="Structured memory (Chroma tiers), independent of session memory",
+    )
     agents_api: AgentsApiConfig = Field(default_factory=AgentsApiConfig, description="Custom-agent management API configuration")
     subagents: SubagentsAppConfig = Field(default_factory=SubagentsAppConfig, description="Subagent runtime configuration")
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig, description="Guardrail middleware configuration")
@@ -126,6 +134,8 @@ class AppConfig(BaseModel):
         # Load memory config if present
         if "memory" in config_data:
             load_memory_config_from_dict(config_data["memory"])
+
+        load_structured_memory_config_from_dict(config_data.get("structured_memory") or {})
 
         # Always refresh agents API config so removed config sections reset
         # singleton-backed state to its default/disabled values on reload.

@@ -117,6 +117,7 @@ flowchart TD
   - 会话记忆完整链路（自动提炼 + 注入）。
   - Chroma 分层 repository 基础数据结构与 create/get。
   - Clarification 通用能力（当前 StructuredMemory **不依赖**其做审批）。
+  - **StructuredMemory 配置面（MVP-0，已落代码）**：`structured_memory.enabled` / `structured_memory.store`（仅 `chroma`）、`deerflow/config/structured_memory_config.py` 单例加载、`AppConfig.structured_memory` 与 YAML 同步、`config.example.yaml` 示例段（`config_version` 已随 schema 递增）、`get_structured_memory_repository()` 在 `enabled: false` 时抛出 `StructuredMemoryDisabledError`；单测见 `backend/tests/test_structured_memory_config.py`。
 - 未具备（当前迭代要补）：
   - agent 显式 **写入** StructuredMemory 的工具与服务（含规范化与来源字段）。
   - 面向 agent/skill 的 **统一查询**工具。
@@ -129,17 +130,19 @@ flowchart TD
 
 ### 项目影响
 
-- 仅形成基线，不改行为。
+- 默认 `structured_memory.enabled: true` 时行为与此前一致（仍可正常获取 repository）。
+- 显式关闭后：`get_structured_memory_repository()` 不可用（抛错），与会话记忆 `memory.enabled` **互不影响**。
 
 ### upstream 合并冲突简案
 
-- 当前阶段无新增代码冲突，只需持续关注 `agents/memory/*` 与 `memory/*` 目录上游变更。
+- 持续关注 `agents/memory/*`、`memory/*`、`deerflow/config/app_config.py` 与 `deerflow/config/*_config.py` 上游变更（本仓库已新增 `structured_memory_config.py`）。
 
 ### 当前进度
 
-- 完成（基线确认）。
+- **已完成**：`structured_memory.enabled` / `structured_memory.store` 配置模型与加载链；`config.example.yaml` 文档与版本号；仓储全局入口与开关语义；`reset_structured_memory_repository_singleton()` 供测试/热切换；`deerflow.config` / `deerflow.memory` 对外导出补充。
+- **仍为缺口（按原优先级）**：MVP-1 写入工具与服务、MVP-3 统一查询工具（见下节）。
 
-### 新增函数与配置清单（本阶段定义，不落代码）
+### 新增函数与配置清单（本阶段）
 
 - **`StructuredMemoryRecordStatus`（枚举）：当前不纳入实现清单**
   - 无用户确认、无归档/软删/版本替代前，记录可**默认视为有效**，Chroma 文档**不必**携带 `status` 字段亦可跑通 MVP-1 / MVP-3。
@@ -149,12 +152,14 @@ flowchart TD
   - **原因**：来源语义已由 `RawMemoryRecord` 的 **`source_thread_id` + `attachment_file_paths` / `attachment_image_paths` / `inline_web_urls`** 表达；distilled/core 以 **`raw_memory_ids` / `distilled_memory_ids`** 做血缘即可。再单立 `SourceRef` 会与 raw 模型**重复**，增加迁移与双写心智负担。
   - **何时才值得讨论**：若将来出现**与 raw 记录形状无关**、却要在多处在同一套 JSON 里传「出处」（例如仅工具协议层、或 distilled metadata 要强冗余全量出处且不想嵌整段 `RawMemoryRecord`），可再评估**抽值对象或别名类型**；名称也未必沿用 `StructuredMemorySourceRef`，以实际契约为准。
   - **结论**：MVP-1 / MVP-3 **不依赖**该类型；计划文中保留本条仅为**显式否定**早期文档里的「推荐引入」，避免后续读者误以为仍要开发。
-- `structured_memory.enabled`（配置，新增）
+- `structured_memory.enabled`（配置，**已实现**）
   - 作用：StructuredMemory 总开关，与现有 `memory.enabled` 解耦。
   - 设计理由：会话记忆与 StructuredMemory 要可独立启停，避免互相影响。
-- `structured_memory.store`（配置，新增）
-  - 作用：声明 StructuredMemory 后端类型，首版固定 `chroma`。
+  - 落点：`StructuredMemoryConfig.enabled`、`load_structured_memory_config_from_dict`（`AppConfig.from_file` 每次刷新）、`get_structured_memory_repository()` 前置校验。
+- `structured_memory.store`（配置，**已实现**）
+  - 作用：声明 StructuredMemory 后端类型，首版固定 `chroma`（Pydantic `Literal`，非 chroma 值在加载时校验失败）。
   - 设计理由：为后续引入 PGVector/ES 预留扩展点。
+  - 落点：`StructuredMemoryConfig.store`；当前仅 chroma 有运行时实现（`StructuredMemoryRepository`）。
 
 **当前迭代最小配置面（实现 MVP-1 + MVP-3 时建议具备）**：`structured_memory.enabled`、`structured_memory.store`、以及 MVP-1/MVP-3 各节中的 `write.*` / `query.*` 护栏项；其余待确认流或治理阶段再扩展。
 
@@ -173,8 +178,7 @@ flowchart TD
   - 规范化正文与标签、补全默认来源（如当前 `thread_id`）、幂等策略（可选，按 `content + source + tier`）、长度上限。
   - 调用已有 `StructuredMemoryRepository.create_raw_memory` / `create_distilled_memory` / `create_core_memory`。
 - 新增配置段（建议）：
-  - `structured_memory.enabled`
-  - `structured_memory.store=chroma`
+  - `structured_memory.enabled`、`structured_memory.store`（**MVP-0 已在仓库落地**，见上节）
   - `structured_memory.write.max_content_length`、`structured_memory.write.allowed_tiers`（运维侧约束；**不等同**于代替模型决策）；可选：`max_attachment_refs_per_field` 等防止列表过长。
 - 新增最小测试：
   - write tool/service 单测（各 tier 成功路径、校验失败路径）。
@@ -423,17 +427,18 @@ flowchart TD
 - `backend/packages/harness/deerflow/agents/middlewares/`
   - `structured_memory_confirmation_middleware.py`（**暂缓**，随 MVP-2）
 - `backend/packages/harness/deerflow/config/`
-  - `structured_memory_config.py`（新增）
+  - `structured_memory_config.py`（**MVP-0 已新增**：模型 + 单例 + `StructuredMemoryDisabledError`）
 - `config.example.yaml`
-  - 新增 `structured_memory` 配置段（新增）
+  - `structured_memory` 配置段（**MVP-0 已写入示例**）
 - `backend/tests/`
-  - `test_structured_memory_*.py`（新增）
+  - `test_structured_memory_config.py`（**MVP-0 已新增**）；后续 MVP-1/MVP-3 可继续扩展 `test_structured_memory_*.py`
 
 ---
 
 ## 7. 开发执行顺序（建议，已按当前策略调整）
 
-1. **MVP-1**：agent 显式 **写入**工具 + `WriteService` + 配置护栏 + 单测。
+0. **MVP-0（配置基线）**：`structured_memory.enabled` / `store` 与加载链 — **已完成**（见 MVP-0「当前进度」）。
+1. **MVP-1**：agent 显式 **写入**工具 + `WriteService` + 配置护栏（`write.*` 等，叠在已有 `enabled`/`store` 之上）+ 单测。
 2. **MVP-3**：**查询**工具 + `SearchService` + 相关 skill/prompt 接入建议 + 单测。
 3. **业务验证**：在实际任务上观察写入频率、检索命中率、误写/噪声；再决定是否需要收紧 prompt、限制 `allowed_tiers`、或启用草案模式。
 4. **MVP-2（可选增量）**：确认中间件 + `CommitService` + 多轮修订，与写入路径用配置切换或并存。

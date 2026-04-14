@@ -13,6 +13,10 @@ import chromadb
 
 from deerflow.config.memory_config import get_memory_config
 from deerflow.config.paths import get_paths
+from deerflow.config.structured_memory_config import (
+    StructuredMemoryDisabledError,
+    get_structured_memory_config,
+)
 from deerflow.memory.models import (
     DEFAULT_MEMORY_AGENT,
     DEFAULT_MEMORY_USER,
@@ -363,8 +367,19 @@ _repository_instance: StructuredMemoryRepository | None = None
 _repository_lock = threading.Lock()
 
 
+def reset_structured_memory_repository_singleton() -> None:
+    """Clear the process-wide repository singleton (for tests or config hot-swap)."""
+    global _repository_instance
+    _repository_instance = None
+
+
 def get_structured_memory_repository() -> StructuredMemoryRepository:
     """Return global structured memory repository singleton."""
+    sm_cfg = get_structured_memory_config()
+    if not sm_cfg.enabled:
+        raise StructuredMemoryDisabledError(
+            "Structured memory is disabled; set structured_memory.enabled to true in config.yaml.",
+        )
     global _repository_instance
     if _repository_instance is not None:
         return _repository_instance

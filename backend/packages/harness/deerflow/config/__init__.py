@@ -1,6 +1,12 @@
 from .app_config import get_app_config
 from .extensions_config import ExtensionsConfig, get_extensions_config
 from .memory_config import MemoryConfig, get_memory_config
+from .structured_memory_config import (
+    StructuredMemoryConfig,
+    StructuredMemoryDisabledError,
+    get_structured_memory_config,
+    set_structured_memory_config,
+)
 from .paths import Paths, get_paths
 from .skill_evolution_config import SkillEvolutionConfig
 from .skills_config import SkillsConfig
@@ -22,6 +28,10 @@ __all__ = [
     "get_extensions_config",
     "MemoryConfig",
     "get_memory_config",
+    "StructuredMemoryConfig",
+    "StructuredMemoryDisabledError",
+    "get_structured_memory_config",
+    "set_structured_memory_config",
     "get_tracing_config",
     "get_explicitly_enabled_tracing_providers",
     "get_enabled_tracing_providers",
