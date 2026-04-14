@@ -33,6 +33,7 @@ def test_structured_memory_config_defaults() -> None:
     cfg = StructuredMemoryConfig()
     assert cfg.enabled is True
     assert cfg.store == "chroma"
+    assert cfg.write.max_content_length == 100_000
 
 
 def test_load_structured_memory_config_from_dict() -> None:

@@ -175,14 +175,30 @@ flowchart TD
   - 输出：`memory_id`、写入 tier、摘要；错误时返回可行动说明（缺字段、超长、非法 tier 组合等）。
   - **范围、类型与内容**不在工具内用硬编码策略代替模型判断，而由 **系统提示 + Skill** 约束「何时写、写什么层、写什么主题」；工具只做**校验与持久化**。
 - 新增 **`StructuredMemoryWriteService`**（可与原 `DraftService` 合并命名，但职责以写入为主）：
-  - 规范化正文与标签、补全默认来源（如当前 `thread_id`）、幂等策略（可选，按 `content + source + tier`）、长度上限。
+  - 规范化正文与标签、长度上限；校验 raw 的 `source_thread_id` 必填（服务层不做默认推断）。
+  - 幂等策略（可选，按 `content + source + tier`）当前暂缓，见下文「`compute_idempotency_key` 暂缓说明」。
   - 调用已有 `StructuredMemoryRepository.create_raw_memory` / `create_distilled_memory` / `create_core_memory`。
 - 新增配置段（建议）：
   - `structured_memory.enabled`、`structured_memory.store`（**MVP-0 已在仓库落地**，见上节）
-  - `structured_memory.write.max_content_length`、`structured_memory.write.allowed_tiers`（运维侧约束；**不等同**于代替模型决策）；可选：`max_attachment_refs_per_field` 等防止列表过长。
+  - `structured_memory.write.max_content_length`（运维侧约束；**不等同**于代替模型决策）；可选：`max_attachment_refs_per_field` 等防止列表过长。
 - 新增最小测试：
   - write tool/service 单测（各 tier 成功路径、校验失败路径）。
   - 与 Chroma 集成的冒烟测试（若已有 harness）。
+
+### `compute_idempotency_key` 暂缓说明（本轮结论）
+
+- **结论**：`compute_idempotency_key` 当前迭代暂不实现，后续按业务观测结果决定是否纳入 MVP-1 增量或并入 MVP-4 治理。
+- **必要性（为什么值得做）**：
+  - agent 自主写入阶段可能因重试、并发或重复推理触发同条 raw 的重复写入。
+  - 后续若接入 update/delete 工具，提前降低重复噪声可减轻治理成本。
+- **困难点（为什么先不做）**：
+  - 同一会话允许多条 raw；`title`/`content` 由 agent 生成，存在改写与近似表达，误判会吞掉本应保留的新知识。
+  - 轻量去重难以覆盖并发竞态；硬幂等通常需要额外唯一索引或事务能力，当前 Chroma 主存储路径实现成本较高。
+  - 需要先用线上数据确定“严格重复”与“有效改写”的边界，避免过早固化规则。
+- **推荐实现方案（后续落地参考）**：
+  - 先做**轻量版本**：仅拦截严格重复，不做语义近似合并。
+  - raw 判重 key 建议基于稳定字段：`tier + source_thread_id + normalized_content + sorted_attachments`（不依赖 `title`）。
+  - 命中策略建议“短窗口去重 + 可观测日志”，并保留开关，后续再评估是否升级为强一致幂等（硬幂等）。
 
 ### 为什么这么设计
 
@@ -202,7 +218,13 @@ flowchart TD
 
 ### 当前进度
 
-- 未开始（**当前建议第一优先级**）。
+- **已完成（首批）**：
+  - `StructuredMemoryWriteService.normalize_and_write(...)` 已落地：tier 校验、长度校验、来源/血缘字段校验、repository 写入分发。
+  - `StructuredMemoryWriteTool` 已落地并注入 builtins：支持 raw/distilled/core 参数；raw 在未显式传 `source_thread_id` 时，先尝试从 runtime 获取当前 `thread_id`，再传入服务层。
+  - `structured_memory.write.max_content_length` 已落地到配置模型与 `config.example.yaml`。
+  - 单测已覆盖核心路径与失败路径（`backend/tests/test_structured_memory_write.py`）。
+- **暂缓**：
+  - `compute_idempotency_key`（见上文暂缓说明）。
 
 ### 新增函数与配置清单（MVP-1 实现）
 
@@ -215,12 +237,13 @@ flowchart TD
 - `StructuredMemoryWriteService.compute_idempotency_key(...)`（新增，可选）
   - 作用：降噪重复写入。
   - 设计理由：自主写入阶段模型仍可能重复调用工具。
+  - 当前状态：**暂缓实现**，待业务观测后再决定轻量或硬幂等路线。
 - `structured_memory.write.max_content_length`（配置，新增）
   - 作用：限制单条长度。
   - 设计理由：性能与成本护栏。
-- `structured_memory.write.allowed_tiers`（配置，新增）
+- `structured_memory.write.allowed_tiers`（配置，候选）
   - 作用：部署级允许写入的 tier 白名单。
-  - 设计理由：分环境收紧能力面（例如仅允许 raw + distilled）。
+  - 当前状态：**本轮不实现**，后续按运维需求再引入。
 - **以下条目暂缓或改为后续确认流专用**：`require_confirmation`、`get_draft(proposal_id)` 仅在与 MVP-2 一并实现时再有必要。
 
 ---

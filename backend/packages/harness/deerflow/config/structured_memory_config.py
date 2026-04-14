@@ -8,9 +8,22 @@ from pydantic import BaseModel, Field
 
 StructuredMemoryStoreName = Literal["chroma"]
 
+DEFAULT_MAX_CONTENT_LENGTH = 100_000
+
 
 class StructuredMemoryDisabledError(RuntimeError):
     """Raised when code requests the repository while structured memory is disabled."""
+
+
+class StructuredMemoryWriteConfig(BaseModel):
+    """Write-path limits for structured memory (tool + service)."""
+
+    max_content_length: int = Field(
+        default=DEFAULT_MAX_CONTENT_LENGTH,
+        ge=256,
+        le=10_000_000,
+        description="Maximum UTF-8 character length for a single memory record body.",
+    )
 
 
 class StructuredMemoryConfig(BaseModel):
@@ -23,6 +36,10 @@ class StructuredMemoryConfig(BaseModel):
     store: StructuredMemoryStoreName = Field(
         default="chroma",
         description="Backend for structured memory. Only ``chroma`` is supported in this release.",
+    )
+    write: StructuredMemoryWriteConfig = Field(
+        default_factory=StructuredMemoryWriteConfig,
+        description="Write tool and service limits.",
     )
 
 

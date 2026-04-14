@@ -12,7 +12,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 8
+config_version: 9
 
 # ============================================================================
 # Logging
@@ -717,6 +717,9 @@ memory:
 structured_memory:
   enabled: true
   store: chroma
+  # Limits for the structured_memory_write tool (single-record body size).
+  write:
+    max_content_length: 100000
 
 # ============================================================================
 # Custom Agent Management API

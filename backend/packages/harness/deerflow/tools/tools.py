@@ -3,9 +3,11 @@ import logging
 from langchain.tools import BaseTool
 
 from deerflow.config import get_app_config
+from deerflow.config.structured_memory_config import get_structured_memory_config
 from deerflow.reflection import resolve_variable
 from deerflow.sandbox.security import is_host_bash_allowed
 from deerflow.tools.builtins import ask_clarification_tool, present_file_tool, task_tool, view_image_tool
+from deerflow.tools.builtins.structured_memory_write_tool import structured_memory_write_tool
 from deerflow.tools.builtins.tool_search import reset_deferred_registry
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,9 @@ def get_available_tools(
         from deerflow.tools.skill_manage_tool import skill_manage_tool
 
         builtin_tools.append(skill_manage_tool)
+
+    if get_structured_memory_config().enabled:
+        builtin_tools.append(structured_memory_write_tool)
 
     # Add subagent tools only if enabled via runtime parameter
     if subagent_enabled:
