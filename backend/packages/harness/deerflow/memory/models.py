@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 DEFAULT_MEMORY_USER = "default-user"
 DEFAULT_MEMORY_AGENT = "unknown-agent"
+
+TITLE_MAX_LENGTH = 500
 
 
 class MemoryTier(str, Enum):
@@ -18,19 +20,11 @@ class MemoryTier(str, Enum):
     CORE = "core"
 
 
-class RawMemoryKind(str, Enum):
-    """Supported raw memory source kinds."""
-
-    SESSION = "session"
-    FILE = "file"
-    IMAGE = "image"
-    WEBPAGE = "webpage"
-
-
 class MemoryRecordCommon(BaseModel):
     """Common fields shared by all memory tiers."""
 
     id: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1, max_length=TITLE_MAX_LENGTH)
     content: str = Field(..., min_length=1)
     created_at: str = Field(..., min_length=1)
     updated_at: str = Field(..., min_length=1)
@@ -40,35 +34,27 @@ class MemoryRecordCommon(BaseModel):
 
 
 class RawMemoryRecord(MemoryRecordCommon):
-    """Raw memory entry sourced from sessions/files/images/webpages."""
+    """Raw memory derived from a single conversation thread.
 
-    raw_kind: RawMemoryKind
-    source_thread_id: str | None = None
-    source_file_path: str | None = None
-    source_image_path: str | None = None
-    source_web_url: str | None = None
+    The agent may fold user uploads (files, images) and inline URLs from that
+    dialogue into one or more raw rows; provenance stays anchored on
+    ``source_thread_id`` with optional path/URL lists for attachments cited
+    in the organized content.
+    """
 
-    @model_validator(mode="after")
-    def validate_source_link(self) -> RawMemoryRecord:
-        """Require source links according to raw kind."""
-        if self.raw_kind == RawMemoryKind.SESSION and not self.source_thread_id:
-            raise ValueError("Session raw memory requires source_thread_id.")
-        if self.raw_kind == RawMemoryKind.FILE and not self.source_file_path:
-            raise ValueError("File raw memory requires source_file_path.")
-        if self.raw_kind == RawMemoryKind.IMAGE and not self.source_image_path:
-            raise ValueError("Image raw memory requires source_image_path.")
-        if self.raw_kind == RawMemoryKind.WEBPAGE and not self.source_web_url:
-            raise ValueError("Webpage raw memory requires source_web_url.")
-        return self
+    source_thread_id: str = Field(..., min_length=1)
+    attachment_file_paths: list[str] = Field(default_factory=list)
+    attachment_image_paths: list[str] = Field(default_factory=list)
+    inline_web_urls: list[str] = Field(default_factory=list)
 
 
 class DistilledMemoryRecord(MemoryRecordCommon):
-    """Distilled memory entry generated from one or more raw memories."""
+    """Distilled memory produced from one or more raw rows."""
 
     raw_memory_ids: list[str] = Field(..., min_length=1)
 
 
 class CoreMemoryRecord(MemoryRecordCommon):
-    """Core memory entry generated from one or more distilled memories."""
+    """Core memory synthesized from one or more distilled rows."""
 
     distilled_memory_ids: list[str] = Field(..., min_length=1)

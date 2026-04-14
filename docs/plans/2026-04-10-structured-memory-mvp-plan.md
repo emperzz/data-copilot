@@ -14,6 +14,7 @@
 - **阶段性策略（已调整）**：当前迭代**不实现**用户审批/确认闭环；**是否写入、写入哪一层（raw/distilled/core）、类型与正文**由 **agent 依据系统提示与 Skill 规范自主决定**，通过**显式工具调用**落库。`ask_clarification` 式「先提议—再人工确认—再提交」整段能力**待主流程（写入 + 检索 + 业务验证）跑通后再开发**（对应原 MVP-2）。
 - 与会话记忆的「回合结束后异步自动提炼」区分：StructuredMemory **不走** `MemoryMiddleware` 静默队列；未调用写入工具则不应产生 StructuredMemory 记录。
 - 方案基于当前仓库事实，优先最小化 MVP，后续可按效果重构。
+- **契约精简**：在用户确认与记录治理均未上线前，**不强制**为每条记忆维护独立「状态机」类型；优先保证 **写入参数校验、来源字段、查询与配置护栏**。待 MVP-4（或重新启用 MVP-2）再引入显式状态或等价 metadata，避免过早抽象。
 
 ### 1.3 当前代码基线（用于设计决策）
 
@@ -21,6 +22,14 @@
 - `MemoryStorage` 当前抽象的数据契约是 `dict[str, Any]` 的单体 memory payload（对应 `memory.json`）。
 - 已有 Chroma 分层仓储基础：`deerflow.memory.models`、`deerflow.memory.repository.StructuredMemoryRepository`，支持 `raw/distilled/core` 三层的 create/get。
 - 尚无面向 agent 的 **StructuredMemory 显式写入工具链**（规范化、按 tier 写入、来源字段）与 **统一查询工具**；**用户确认后提交**的编排（确认状态机、多轮修订）刻意后移，不在当前迭代范围。
+
+### 1.4 分层数据契约（与 `deerflow.memory.models` 对齐）
+
+- **共性**：`MemoryRecordCommon` 含 `id`、`title`（概括本条记忆）、`content`、`created_at` / `updated_at`、`tags`、`source_agent`、`user`。
+- **Raw**：语义上**均来自同一会话线程**；必填 `source_thread_id`。对话内可能出现的**用户上传文件路径、图片路径、用户给出的 URL** 以列表形式可选挂载：`attachment_file_paths`、`attachment_image_paths`、`inline_web_urls`（可多值，也可为空）。由 agent 将对话与附件内容整理为**一条或多条** raw。
+- **Distilled**：由一条或多条 raw 归纳而来；`raw_memory_ids` **至少 1 个**。
+- **Core**：由一条或多条 distilled 进一步抽象而来；`distilled_memory_ids` **至少 1 个**（**不强制**多条 distilled，单条亦可）。
+- **血缘**：distilled → raw、core → distilled 仅通过 ID 列表关联；更细粒度（如 message_id）可按需后续加 metadata，不阻塞当前契约。
 
 ---
 
@@ -47,7 +56,7 @@
 
 - **不建议直接复用为 StructuredMemory 主接口**
   - `MemoryStorage` 当前契约是“加载/保存整个 memory 字典”，与 StructuredMemory“多条记录、分层、可追溯来源、按记录 CRUD”的语义不匹配（**是否**经人工确认再入库为产品阶段策略，不改变上述接口差异）。
-  - StructuredMemory 需要 `create/query/list/link/update_status` 等面向记录的 API，不适合 `load/save(dict)`。（当前阶段以 `create` + 后续 `query` 为主；`update_status` 等可随治理阶段扩展。）
+  - StructuredMemory 需要 `create/query/list` 等面向记录的 API，不适合 `load/save(dict)`。（当前阶段以 `create` + `query` 为主；**按记录更新状态/软删**等与治理或确认流一并考虑，见 MVP-4 / 暂缓的 MVP-2。）
 
 - **建议操作**
   - 保留 `MemoryStorage` 处理会话记忆。
@@ -88,11 +97,12 @@ flowchart TD
 | `LeadAgent` 执行主链路 | 原有 | 现有 agent 装配与运行 | 已有 |
 | `ask_clarification` + `ClarificationMiddleware` | 原有 | 通用澄清能力仍在；**当前不接入** StructuredMemory 审批链 | 已有（未接 SM） |
 | `StructuredMemoryRepository.create_*` | 原有（基础） | Chroma 各层写入 | 已有 |
-| `StructuredMemoryWriteTool`（或等价内置工具） | 新增 | agent 显式写入；**tier / raw_kind / 内容 / 标签**由调用参数体现「自主决策」结果 | **MVP-1（当前优先）** |
+| `StructuredMemoryWriteTool`（或等价内置工具） | 新增 | agent 显式写入；**tier / title / content / tags** 及 **raw 会话锚点与附件列表** 或 **distilled/core 的 id 列表**由调用参数体现「自主决策」结果 | **MVP-1（当前优先）** |
 | `StructuredMemoryWriteService.build_record(...)` | 新增 | 与原 `DraftService` 职责类似：规范化、来源、幂等、长度与类型校验 | **MVP-1** |
 | `StructuredMemoryTool.query()` | 新增 | agent/skill 统一检索 | **MVP-3（当前优先，与写入并列验证）** |
 | `StructuredMemoryConfirmationMiddleware` / `CommitService` / `mark_rejected` 等 | 新增 | 用户确认后再 promote | **暂缓（原 MVP-2，主流程验证后）** |
 | `StructuredMemoryIndexService.update_indexes()` | 新增 | 检索优化、标签索引 | MVP-3/4 |
+| `StructuredMemoryRecordStatus`（或等价生命周期语义） | 可选/暂缓 | 无确认且无治理前**可不建**；归档/软删/替代需要稳定语义时引入 | **MVP-4 首选**；MVP-2 启用时可先上**提案子状态** |
 | 记忆生命周期治理（归档/冲突合并） | 新增 | 后续增强 | MVP-4 |
 
 ---
@@ -131,18 +141,22 @@ flowchart TD
 
 ### 新增函数与配置清单（本阶段定义，不落代码）
 
-- `StructuredMemoryRecordStatus`（枚举，新增）
-  - 作用：统一记录生命周期状态（如 `active` / `superseded` / `archived`）；**后续**若启用确认流，可再并入 `pending_confirmation` / `rejected` 等，避免字符串分叉。
-  - 设计理由：先定义跨模块契约；当前阶段以「已写入后的治理态」为主，确认态为扩展预留。
-- `StructuredMemorySourceRef`（结构体，新增）
-  - 作用：统一 source 信息字段（thread/file/url/image/tool_call），供 raw/distilled/core 共用。
-  - 设计理由：StructuredMemory 强调可追溯，先固定来源结构有利于查询和审计。
+- **`StructuredMemoryRecordStatus`（枚举）：当前不纳入实现清单**
+  - 无用户确认、无归档/软删/版本替代前，记录可**默认视为有效**，Chroma 文档**不必**携带 `status` 字段亦可跑通 MVP-1 / MVP-3。
+  - **若落地 MVP-2**：再引入与确认流相关的状态（如 `draft` / `pending_confirmation` / `rejected`），可与提案 ID、修订次数等字段同批设计。
+  - **若落地 MVP-4**：再引入与治理相关的状态（如 `active` / `archived` / `superseded`）；是否与确认态合并为同一枚举、或分域定义，**届时再选**，避免现阶段为「可能扩展」提前锁死命名。
+- **`StructuredMemorySourceRef`：当前路线下不必实现，也不再作为「推荐项」**
+  - **原因**：来源语义已由 `RawMemoryRecord` 的 **`source_thread_id` + `attachment_file_paths` / `attachment_image_paths` / `inline_web_urls`** 表达；distilled/core 以 **`raw_memory_ids` / `distilled_memory_ids`** 做血缘即可。再单立 `SourceRef` 会与 raw 模型**重复**，增加迁移与双写心智负担。
+  - **何时才值得讨论**：若将来出现**与 raw 记录形状无关**、却要在多处在同一套 JSON 里传「出处」（例如仅工具协议层、或 distilled metadata 要强冗余全量出处且不想嵌整段 `RawMemoryRecord`），可再评估**抽值对象或别名类型**；名称也未必沿用 `StructuredMemorySourceRef`，以实际契约为准。
+  - **结论**：MVP-1 / MVP-3 **不依赖**该类型；计划文中保留本条仅为**显式否定**早期文档里的「推荐引入」，避免后续读者误以为仍要开发。
 - `structured_memory.enabled`（配置，新增）
   - 作用：StructuredMemory 总开关，与现有 `memory.enabled` 解耦。
   - 设计理由：会话记忆与 StructuredMemory 要可独立启停，避免互相影响。
 - `structured_memory.store`（配置，新增）
   - 作用：声明 StructuredMemory 后端类型，首版固定 `chroma`。
   - 设计理由：为后续引入 PGVector/ES 预留扩展点。
+
+**当前迭代最小配置面（实现 MVP-1 + MVP-3 时建议具备）**：`structured_memory.enabled`、`structured_memory.store`、以及 MVP-1/MVP-3 各节中的 `write.*` / `query.*` 护栏项；其余待确认流或治理阶段再扩展。
 
 ---
 
@@ -151,7 +165,8 @@ flowchart TD
 ### 需实现功能细节
 
 - 新增 **`StructuredMemoryWriteTool`**（名称可微调，职责不变）：agent/skill 在需要沉淀知识时**主动调用**。
-  - 输入（示例维度，以实现为准）：`tier`（`raw` / `distilled` / `core`）、`content`、`tags`、`raw_kind`（写 raw 时必填）、**来源字段**（与现有 `RawMemoryRecord` 校验规则一致，或对齐未来的 `StructuredMemorySourceRef`）、若写 distilled/core 则 **`raw_memory_ids` / `distilled_memory_ids`** 等关联字段。
+  - 输入（示例维度，以实现为准）：`tier`（`raw` / `distilled` / `core`）、`title`、`content`、`tags`；写 **raw** 时 **`source_thread_id`** 及可选 **`attachment_file_paths` / `attachment_image_paths` / `inline_web_urls`**；写 **distilled** 时 **`raw_memory_ids`（≥1）**；写 **core** 时 **`distilled_memory_ids`（≥1，不强制多条）**。
+  - **无需**在首版工具参数中暴露「记录状态枚举」；治理态由后续 MVP-4 或元数据扩展承担。
   - 输出：`memory_id`、写入 tier、摘要；错误时返回可行动说明（缺字段、超长、非法 tier 组合等）。
   - **范围、类型与内容**不在工具内用硬编码策略代替模型判断，而由 **系统提示 + Skill** 约束「何时写、写什么层、写什么主题」；工具只做**校验与持久化**。
 - 新增 **`StructuredMemoryWriteService`**（可与原 `DraftService` 合并命名，但职责以写入为主）：
@@ -160,7 +175,7 @@ flowchart TD
 - 新增配置段（建议）：
   - `structured_memory.enabled`
   - `structured_memory.store=chroma`
-  - `structured_memory.write.max_content_length`、`structured_memory.write.allowed_tiers`、`structured_memory.write.allowed_raw_kinds`（运维侧约束；**不等同**于代替模型决策）
+  - `structured_memory.write.max_content_length`、`structured_memory.write.allowed_tiers`（运维侧约束；**不等同**于代替模型决策）；可选：`max_attachment_refs_per_field` 等防止列表过长。
 - 新增最小测试：
   - write tool/service 单测（各 tier 成功路径、校验失败路径）。
   - 与 Chroma 集成的冒烟测试（若已有 harness）。
@@ -199,9 +214,9 @@ flowchart TD
 - `structured_memory.write.max_content_length`（配置，新增）
   - 作用：限制单条长度。
   - 设计理由：性能与成本护栏。
-- `structured_memory.write.allowed_tiers` / `allowed_raw_kinds`（配置，新增）
-  - 作用：部署级白名单。
-  - 设计理由：分环境收紧能力面。
+- `structured_memory.write.allowed_tiers`（配置，新增）
+  - 作用：部署级允许写入的 tier 白名单。
+  - 设计理由：分环境收紧能力面（例如仅允许 raw + distilled）。
 - **以下条目暂缓或改为后续确认流专用**：`require_confirmation`、`get_draft(proposal_id)` 仅在与 MVP-2 一并实现时再有必要。
 
 ---
@@ -219,9 +234,9 @@ flowchart TD
   - `confirm`：raw -> distilled -> core（调用现有 repository create 接口）。
   - `revise`：更新草案内容，重新发起 `ask_clarification`。
   - `reject`：标记草案拒绝状态，不进入 distilled/core。
-- 新增状态模型（建议）
-  - `draft / pending_confirmation / confirmed / rejected / committed / revised`
-  - 记录 `confirmed_by`、`confirmed_at`、`revision_count`。
+- 新增状态模型（建议，**仅在本节启用时需要**）
+  - 提案/草案侧：`draft` / `pending_confirmation` / `confirmed` / `rejected` / `revised` 等；记录 `confirmed_by`、`confirmed_at`、`revision_count`。
+  - 与 MVP-0 中「暂不实现 `StructuredMemoryRecordStatus`」不矛盾：此处为 **确认流专用子状态**；全局记录生命周期枚举仍可在 MVP-4 统一引入或与这里合并设计。
 - 新增测试
   - 中间件确认流转测试。
   - 多轮 revise 后再 confirm 测试。
@@ -266,8 +281,8 @@ flowchart TD
   - 作用：从 raw 提炼为 distilled，并建立来源引用关系。
   - 设计理由：显式分层可避免后续把业务事实直接混入 core。
 - `StructuredMemoryCommitService.promote_to_core(distilled_ids)`（新增）
-  - 作用：合并高价值 distilled 进入 core，形成可稳定复用的事实层。
-  - 设计理由：core 应保持高质量、低噪声，必须通过确认后路径进入。
+  - 作用：由一条或多条 distilled 合并/抽象进入 core，形成可稳定复用的事实层（`distilled_ids` 至少 1 条，产品策略决定是否偏好多条合并）。
+  - 设计理由：在**启用 MVP-2** 的配置下，core 建议仅经确认后 promote；与 MVP-1「工具直写 core」可并存时，以 **`structured_memory` 配置**区分模式，避免语义混用。
 - `structured_memory.confirmation.max_rounds`（配置，新增）
   - 作用：限制最多修订轮次，防止无限循环确认。
   - 设计理由：保护交互体验和模型成本。
@@ -322,8 +337,8 @@ flowchart TD
   - 作用：构建 metadata 过滤条件（tier/tags/user/agent/time）。
   - 设计理由：过滤逻辑集中后，避免不同调用方语义不一致。
 - `StructuredMemorySearchService._rerank_results(...)`（新增）
-  - 作用：综合向量分数、时间衰减、状态权重进行二次排序。
-  - 设计理由：企业知识往往同时要求“相关性 + 时效性”。
+  - 作用：综合向量分数、时间衰减、**tier 等 metadata** 进行二次排序（首版可不依赖记录级 `status` 字段；若后续写入 `archived` 等标记，再纳入过滤或降权）。
+  - 设计理由：企业知识往往同时要求「相关性 + 时效性」；排序策略与是否存在状态枚举解耦。
 - `StructuredMemorySearchService.format_for_agent(...)`（新增）
   - 作用：将检索结果格式化为 agent 可消费文本（含来源链路）。
   - 设计理由：统一输出样式，降低不同 skill 的接入成本。
@@ -366,6 +381,9 @@ flowchart TD
 
 ### 新增函数与配置清单（MVP-4 实现）
 
+- `StructuredMemoryRecordStatus`（或等价「记录生命周期」枚举/约定，**建议在本阶段首次落地**）
+  - 作用：支撑归档、替代、软删、冲突标记等在查询与写入侧的可判定语义。
+  - 设计理由：治理必须有稳定状态或等价 metadata；此前 MVP 刻意省略，至此再引入可避免空转抽象。
 - `StructuredMemoryGovernanceService.detect_conflicts(memory_ids)`（新增）
   - 作用：检测语义冲突或互斥事实并输出冲突组。
   - 设计理由：企业规则经常演进，冲突不可避免，需要自动预警。
@@ -396,7 +414,7 @@ flowchart TD
 ## 6. 推荐代码落点（最小侵入）
 
 - `backend/packages/harness/deerflow/memory/`
-  - `structured_memory_models.py`（新增，可选：与现有 `models.py` 渐进合并）
+  - `structured_memory_models.py`（新增，可选：与现有 `models.py` 渐进合并；**首版可仅含写入/查询相关模型，状态枚举延至 MVP-4**）
   - `structured_memory_repository.py`（新增，可封装现有 `StructuredMemoryRepository`）
   - `structured_memory_services.py`（新增：**write + search** 优先；`commit` 随 MVP-2 再加）
 - `backend/packages/harness/deerflow/tools/builtins/`

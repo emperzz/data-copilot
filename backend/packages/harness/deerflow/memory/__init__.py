@@ -6,8 +6,8 @@ from deerflow.memory.models import (
     CoreMemoryRecord,
     DistilledMemoryRecord,
     MemoryTier,
-    RawMemoryKind,
     RawMemoryRecord,
+    TITLE_MAX_LENGTH,
 )
 from deerflow.memory.repository import (
     StructuredMemoryRepository,
@@ -18,7 +18,7 @@ __all__ = [
     "DEFAULT_MEMORY_AGENT",
     "DEFAULT_MEMORY_USER",
     "MemoryTier",
-    "RawMemoryKind",
+    "TITLE_MAX_LENGTH",
     "RawMemoryRecord",
     "DistilledMemoryRecord",
     "CoreMemoryRecord",
