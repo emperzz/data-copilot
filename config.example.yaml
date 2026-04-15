@@ -720,6 +720,13 @@ structured_memory:
   # Limits for the structured_memory_write tool (single-record body size).
   write:
     max_content_length: 100000
+  # Query tool defaults and limits.
+  query:
+    default_top_k: 5
+    max_top_k: 20
+    default_tiers:
+      - core
+      - distilled
 
 # ============================================================================
 # Custom Agent Management API

@@ -322,6 +322,7 @@ You are {agent_name}, an open-source super agent.
 
 {soul}
 {memory_context}
+{structured_memory_section}
 
 <thinking_style>
 - Think concisely and strategically about the user's request BEFORE taking action
@@ -632,6 +633,91 @@ def get_deferred_tools_prompt_section() -> str:
     return f"<available-deferred-tools>\n{names}\n</available-deferred-tools>"
 
 
+def _build_structured_memory_section() -> str:
+    """Build prompt guidance for structured memory tools when enabled."""
+    try:
+        from deerflow.config.structured_memory_config import get_structured_memory_config
+
+        if not get_structured_memory_config().enabled:
+            return ""
+    except Exception:
+        return ""
+
+    return """<structured_memory_system>
+You have **structured memory** tools for persisting and retrieving cross-session business knowledge (schemas, rules, troubleshooting patterns, constraint logic, etc.).
+
+**Available tools:**
+- `structured_memory_write` – persist a record (raw / distilled / core tier).
+- `structured_memory_query` – semantic search across stored knowledge.
+- `structured_memory_list_tags` – discover available tag categories and counts.
+- `structured_memory_get_by_id` – fetch a record by exact id with optional upstream lineage.
+
+**Memory model (three tiers — how they relate and how they are produced):**
+- **raw** — Evidence tied to a **single conversation thread** (`source_thread_id`).
+  Capture what was actually said or shown: user-stated facts, pasted SQL, errors, paths, URLs, or decisions from *this* dialogue.
+  Multiple raw rows per thread are normal. Raw is the **source layer** for later synthesis.
+- **distilled** — **Inductive summary** across one or more raw rows (`raw_memory_ids`, at least one).
+  Merge several raw snippets into one coherent fact, rule, or procedure (same topic, less duplication).
+  Distilled **must** reference the raw ids it was derived from.
+- **core** — **Stable, reusable abstractions** from one or more distilled rows (`distilled_memory_ids`, at least one).
+  Use for org-wide invariants: naming conventions, canonical definitions, always/never policies, or compact rules many tasks reuse.
+  Core should read like a **short policy or fact card**, not a chat log.
+
+**Producing tiers (typical flow):** capture specifics as **raw** → merge into **distilled** → promote durable truth into **core**.
+You may skip tiers only when clearly justified (e.g. one crisp policy belongs in core and you already have distilled support).
+
+**Fields — `title` vs `content` vs `tags`:**
+- **`title`** — One-line **label for humans and search previews** (what this row is about). Prefer concrete nouns: table or pipeline name, error code, rule name. Keep it short; avoid pasting long bodies here.
+- **`content`** — The **full carry** of the memory: definitions, SQL fragments, steps, constraints, context, and anything needed to reuse the knowledge without opening the original chat. This is what gets embedded for semantic search.
+- **`tags`** — A **flat list of short tokens** for filtering and discovery (not a second body).
+  Use **consistent, machine-like names** so `structured_memory_list_tags` stays useful.
+  Suggested dimensions (pick what fits; combine with `:` if helpful):
+  - **Domain:** e.g. `dw`, `etl`, `catalog`, `lineage`, `sql`, `ops`
+  - **Asset or subject:** e.g. `table:fact_orders`, `pipeline:nightly_ingest`, `dataset:sales`
+  - **Kind of knowledge:** e.g. `schema`, `constraint`, `sla`, `troubleshooting`, `convention`, `breaking-change`
+  - **Environment (optional):** e.g. `prod`, `staging` — only when it materially changes the fact
+  Avoid one-off chat tags (`user-question`, `todo`). Prefer 3–8 tags per record rather than dozens.
+
+**When to WRITE:**
+- The conversation yields stable, reusable knowledge (table definitions, business rules, ETL logic, troubleshooting resolutions).
+- Do NOT write ephemeral chat content, greetings, or trivial facts.
+
+**When to QUERY (do this BEFORE answering domain-specific questions):**
+1. Call `structured_memory_list_tags` to see which knowledge categories exist.
+2. Call `structured_memory_query` with relevant tags and query text.
+3. If a result lacks detail, call `structured_memory_get_by_id` with `include_upstream=True` to drill into source records.
+
+**Priority rule:** Always check structured memory before relying solely on your training knowledge for domain-specific questions — stored records reflect verified, project-specific facts.
+
+**Examples (illustrative — adapt ids and text to the real thread and facts):**
+
+*Example A — raw capture after the user explains a pipeline failure*
+- User pasted an error and log path in thread `abc123`.
+- `structured_memory_write(tier="raw", title="Airflow DAG nightly_sales — timeout on merge",`
+  `content="Symptom: merge times out after 45m. Log: .../merge.log. Slot contention 02:00–04:00 UTC.",`
+  `tags=["troubleshooting", "pipeline:nightly_sales", "ops"], source_thread_id="abc123")`
+
+*Example B — distilled merge of two raw rows*
+- You already have `raw_111…` and `raw_222…` about the same incident.
+- `structured_memory_write(tier="distilled", title="nightly_sales merge timeouts — summary",`
+  `content="Both incidents: slot contention during maintenance; mitigation: shift DAG or reduce parallelism.",`
+  `tags=["troubleshooting", "pipeline:nightly_sales"], raw_memory_ids=["raw_111…", "raw_222…"])`
+
+*Example C — core policy from distilled practice*
+- Distilled row `distilled_333…` states the agreed mitigation.
+- `structured_memory_write(tier="core", title="ETL: no heavy merges in maintenance window",`
+  `content="Do not schedule wide merges 02:00–04:00 UTC unless approved; prefer staggered batches.",`
+  `tags=["etl", "constraint", "sla"], distilled_memory_ids=["distilled_333…"])`
+
+*Example D — read path*
+1. `structured_memory_list_tags()` → pick `pipeline:nightly_sales` and `troubleshooting`.
+2. `structured_memory_query(query_text="merge task timeout",`
+   `tags=["pipeline:nightly_sales", "troubleshooting"], tier_filter=["core", "distilled"])`
+3. If the core hit is too terse: `structured_memory_get_by_id(memory_id="core_…", include_upstream=True)`
+   to load linked distilled and raw evidence.
+</structured_memory_system>"""
+
+
 def _build_acp_section() -> str:
     """Build the ACP agent prompt section, only if ACP agents are configured."""
     try:
@@ -711,6 +797,9 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
     custom_mounts_section = _build_custom_mounts_section()
     acp_and_mounts_section = "\n".join(section for section in (acp_section, custom_mounts_section) if section)
 
+    # Build structured memory guidance when enabled
+    structured_memory_section = _build_structured_memory_section()
+
     # Format the prompt with dynamic skills and memory
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=agent_name or "DeerFlow 2.0",
@@ -718,6 +807,7 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
         skills_section=skills_section,
         deferred_tools_section=deferred_tools_section,
         memory_context=memory_context,
+        structured_memory_section=structured_memory_section,
         subagent_section=subagent_section,
         subagent_reminder=subagent_reminder,
         subagent_thinking=subagent_thinking,

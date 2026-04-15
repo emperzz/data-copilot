@@ -26,6 +26,27 @@ class StructuredMemoryWriteConfig(BaseModel):
     )
 
 
+class StructuredMemoryQueryConfig(BaseModel):
+    """Query-path defaults for structured memory search tools."""
+
+    default_top_k: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description="Default number of results returned when top_k is not specified.",
+    )
+    max_top_k: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Hard ceiling for a single query to prevent runaway token cost.",
+    )
+    default_tiers: list[str] = Field(
+        default_factory=lambda: ["core", "distilled"],
+        description="Tiers searched when the caller omits tier_filter (avoids raw noise by default).",
+    )
+
+
 class StructuredMemoryConfig(BaseModel):
     """Structured memory subsystem: independent of ``memory.enabled`` (session memory)."""
 
@@ -40,6 +61,10 @@ class StructuredMemoryConfig(BaseModel):
     write: StructuredMemoryWriteConfig = Field(
         default_factory=StructuredMemoryWriteConfig,
         description="Write tool and service limits.",
+    )
+    query: StructuredMemoryQueryConfig = Field(
+        default_factory=StructuredMemoryQueryConfig,
+        description="Query tool defaults and limits.",
     )
 
 

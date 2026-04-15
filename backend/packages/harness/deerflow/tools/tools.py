@@ -7,6 +7,9 @@ from deerflow.config.structured_memory_config import get_structured_memory_confi
 from deerflow.reflection import resolve_variable
 from deerflow.sandbox.security import is_host_bash_allowed
 from deerflow.tools.builtins import ask_clarification_tool, present_file_tool, task_tool, view_image_tool
+from deerflow.tools.builtins.structured_memory_get_by_id_tool import structured_memory_get_by_id_tool
+from deerflow.tools.builtins.structured_memory_list_tags_tool import structured_memory_list_tags_tool
+from deerflow.tools.builtins.structured_memory_query_tool import structured_memory_query_tool
 from deerflow.tools.builtins.structured_memory_write_tool import structured_memory_write_tool
 from deerflow.tools.builtins.tool_search import reset_deferred_registry
 
@@ -73,6 +76,9 @@ def get_available_tools(
 
     if get_structured_memory_config().enabled:
         builtin_tools.append(structured_memory_write_tool)
+        builtin_tools.append(structured_memory_query_tool)
+        builtin_tools.append(structured_memory_list_tags_tool)
+        builtin_tools.append(structured_memory_get_by_id_tool)
 
     # Add subagent tools only if enabled via runtime parameter
     if subagent_enabled:
