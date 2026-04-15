@@ -1,15 +1,15 @@
 from .app_config import get_app_config
 from .extensions_config import ExtensionsConfig, get_extensions_config
 from .memory_config import MemoryConfig, get_memory_config
+from .paths import Paths, get_paths
+from .skill_evolution_config import SkillEvolutionConfig
+from .skills_config import SkillsConfig
 from .structured_memory_config import (
     StructuredMemoryConfig,
     StructuredMemoryDisabledError,
     get_structured_memory_config,
     set_structured_memory_config,
 )
-from .paths import Paths, get_paths
-from .skill_evolution_config import SkillEvolutionConfig
-from .skills_config import SkillsConfig
 from .tracing_config import (
     get_enabled_tracing_providers,
     get_explicitly_enabled_tracing_providers,

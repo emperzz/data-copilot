@@ -7,7 +7,6 @@ import yaml
 from pydantic import ValidationError
 
 from deerflow.config.app_config import get_app_config, reset_app_config
-
 from deerflow.config.structured_memory_config import (
     StructuredMemoryConfig,
     StructuredMemoryDisabledError,

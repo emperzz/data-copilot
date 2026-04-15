@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -12,7 +12,7 @@ DEFAULT_MEMORY_AGENT = "unknown-agent"
 TITLE_MAX_LENGTH = 500
 
 
-class MemoryTier(str, Enum):
+class MemoryTier(StrEnum):
     """Supported memory tiers."""
 
     RAW = "raw"

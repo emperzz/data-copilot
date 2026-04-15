@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.structured_memory_config import (
     StructuredMemoryConfig,
     StructuredMemoryWriteConfig,
@@ -14,7 +15,6 @@ from deerflow.config.structured_memory_config import (
     load_structured_memory_config_from_dict,
     set_structured_memory_config,
 )
-from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.memory.repository import (
     StructuredMemoryRepository,
     reset_structured_memory_repository_singleton,

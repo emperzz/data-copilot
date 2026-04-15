@@ -20,10 +20,10 @@ from deerflow.config.structured_memory_config import (
 from deerflow.memory.models import (
     DEFAULT_MEMORY_AGENT,
     DEFAULT_MEMORY_USER,
+    TITLE_MAX_LENGTH,
     CoreMemoryRecord,
     DistilledMemoryRecord,
     RawMemoryRecord,
-    TITLE_MAX_LENGTH,
 )
 
 RAW_COLLECTION_NAME = "memory_raw"
@@ -94,6 +94,17 @@ class StructuredMemoryRepository:
         self._core_collection = self._client.get_or_create_collection(name=CORE_COLLECTION_NAME)
         self._default_user = default_user
         self._default_source_agent = default_source_agent
+
+    @staticmethod
+    def _resolve_collection_and_tier(memory_id: str) -> tuple[str, str] | None:
+        memory_id = memory_id.strip()
+        if memory_id.startswith("raw_"):
+            return ("_raw_collection", "raw")
+        if memory_id.startswith("distilled_"):
+            return ("_distilled_collection", "distilled")
+        if memory_id.startswith("core_"):
+            return ("_core_collection", "core")
+        return None
 
     def _resolve_common_fields(
         self,
@@ -361,6 +372,62 @@ class StructuredMemoryRepository:
             user=str(metadata.get("user", self._default_user)),
             distilled_memory_ids=distilled_ids,
         )
+
+    def update_memory(
+        self,
+        *,
+        memory_id: str,
+        title: str,
+        content: str,
+        tags: list[str] | None = None,
+        source_agent: str | None = None,
+        user: str | None = None,
+    ) -> bool:
+        """Update common fields for one memory record by id.
+
+        Returns ``True`` when the record exists and was updated, ``False`` when
+        id prefix is unsupported or no record with that id exists.
+        """
+        resolved = self._resolve_collection_and_tier(memory_id)
+        if resolved is None:
+            return False
+        collection_attr, _tier = resolved
+        collection = getattr(self, collection_attr)
+
+        result = collection.get(ids=[memory_id], include=["documents", "metadatas"])
+        ids = result.get("ids") or []
+        if not ids:
+            return False
+        metadata = (result.get("metadatas") or [{}])[0] or {}
+
+        now = utc_now_iso_z()
+        next_metadata: dict[str, Any] = {
+            **metadata,
+            "title": title.strip()[:TITLE_MAX_LENGTH],
+            "updated_at": now,
+            "tags_json": _string_list_to_json(tags or []),
+            "source_agent": source_agent or str(metadata.get("source_agent", self._default_source_agent)),
+            "user": user or str(metadata.get("user", self._default_user)),
+        }
+        collection.update(
+            ids=[memory_id],
+            documents=[content],
+            metadatas=[next_metadata],
+        )
+        return True
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """Delete one memory record by id, returning whether it existed."""
+        resolved = self._resolve_collection_and_tier(memory_id)
+        if resolved is None:
+            return False
+        collection_attr, _tier = resolved
+        collection = getattr(self, collection_attr)
+        ids = collection.get(ids=[memory_id], include=[]).get("ids") or []
+        if not ids:
+            return False
+        collection.delete(ids=[memory_id])
+        return True
 
 
 _repository_instance: StructuredMemoryRepository | None = None

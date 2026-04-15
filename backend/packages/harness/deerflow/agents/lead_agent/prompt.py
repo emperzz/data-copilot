@@ -648,6 +648,8 @@ You have **structured memory** tools for persisting and retrieving cross-session
 
 **Available tools:**
 - `structured_memory_write` – persist a record (raw / distilled / core tier).
+- `structured_memory_update` – revise an existing record by id (title/content/tags).
+- `structured_memory_delete` – delete an existing record by id.
 - `structured_memory_query` – semantic search across stored knowledge.
 - `structured_memory_list_tags` – discover available tag categories and counts.
 - `structured_memory_get_by_id` – fetch a record by exact id with optional upstream lineage.
@@ -682,6 +684,19 @@ You may skip tiers only when clearly justified (e.g. one crisp policy belongs in
 - The conversation yields stable, reusable knowledge (table definitions, business rules, ETL logic, troubleshooting resolutions).
 - Do NOT write ephemeral chat content, greetings, or trivial facts.
 
+**When to UPDATE (not rewrite as a new record):**
+- Existing memory id is still the same topic, but details changed (fix error text, tighten rule wording, refresh SLA/window, etc.).
+- Update the original row with `structured_memory_update` so retrieval history stays clean and avoids duplicate near-identical records.
+- Preserve lineage intent: update only content/title/tags; keep tier relationships (`raw_memory_ids` / `distilled_memory_ids`) stable.
+
+**When to DELETE:**
+- The record is obsolete, incorrect, or duplicated and should not be retrieved anymore.
+- Use `structured_memory_delete` with exact id.
+- Respect lineage constraints enforced by tools:
+  - raw referenced by distilled cannot be deleted first.
+  - distilled referenced by core cannot be deleted first.
+  - delete downstream first (core → distilled → raw), or update downstream references before deleting upstream rows.
+
 **When to QUERY (do this BEFORE answering domain-specific questions):**
 1. Call `structured_memory_list_tags` to see which knowledge categories exist.
 2. Call `structured_memory_query` with relevant tags and query text.
@@ -715,6 +730,18 @@ You may skip tiers only when clearly justified (e.g. one crisp policy belongs in
    `tags=["pipeline:nightly_sales", "troubleshooting"], tier_filter=["core", "distilled"])`
 3. If the core hit is too terse: `structured_memory_get_by_id(memory_id="core_…", include_upstream=True)`
    to load linked distilled and raw evidence.
+
+*Example E — update an existing memory*
+- Existing record `distilled_444…` has outdated maintenance window text.
+- `structured_memory_update(memory_id="distilled_444…", title="nightly_sales merge timeouts — summary",`
+  `content="Slot contention mainly 01:30–03:30 UTC after infra change; mitigation unchanged.",`
+  `tags=["troubleshooting", "pipeline:nightly_sales"])`
+
+*Example F — safe delete with lineage order*
+- You decide to remove a wrong chain: `core_555…` -> `distilled_444…` -> `raw_222…`.
+1. `structured_memory_delete(memory_id="core_555…")`
+2. `structured_memory_delete(memory_id="distilled_444…")`
+3. `structured_memory_delete(memory_id="raw_222…")`
 </structured_memory_system>"""
 
 
