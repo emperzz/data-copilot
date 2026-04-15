@@ -21,7 +21,9 @@
 - 已有会话记忆主链路：`MemoryMiddleware.after_agent()` -> `MemoryUpdateQueue.add()` -> `MemoryUpdater.update_memory()` -> `MemoryStorage.save()`。
 - `MemoryStorage` 当前抽象的数据契约是 `dict[str, Any]` 的单体 memory payload（对应 `memory.json`）。
 - 已有 Chroma 分层仓储基础：`deerflow.memory.models`、`deerflow.memory.repository.StructuredMemoryRepository`，支持 `raw/distilled/core` 三层的 create/get。
-- 尚无面向 agent 的 **StructuredMemory 显式写入工具链**（规范化、按 tier 写入、来源字段）与 **统一查询工具**；**用户确认后提交**的编排（确认状态机、多轮修订）刻意后移，不在当前迭代范围。
+- `StructuredMemoryWriteTool` + `StructuredMemoryWriteService` 已落地（MVP-1 首批完成）；当前缺口从“写入+查询”收敛为“查询效果验证与治理增强”。
+- 面向 agent 的 **统一查询工具链** 已落地首版（MVP-3 首批完成）：`structured_memory_query`、`structured_memory_list_tags`、`structured_memory_get_by_id` + `StructuredMemorySearchService`。
+- **用户确认后提交**编排（确认状态机、多轮修订）仍刻意后移，不在当前迭代范围。
 
 ### 1.4 分层数据契约（与 `deerflow.memory.models` 对齐）
 
@@ -99,9 +101,9 @@ flowchart TD
 | `StructuredMemoryRepository.create_*` | 原有（基础） | Chroma 各层写入 | 已有 |
 | `StructuredMemoryWriteTool`（或等价内置工具） | 新增 | agent 显式写入；**tier / title / content / tags** 及 **raw 会话锚点与附件列表** 或 **distilled/core 的 id 列表**由调用参数体现「自主决策」结果 | **MVP-1（当前优先）** |
 | `StructuredMemoryWriteService.build_record(...)` | 新增 | 与原 `DraftService` 职责类似：规范化、来源、幂等、长度与类型校验 | **MVP-1** |
-| `StructuredMemoryTool.query()` | 新增 | agent/skill 统一检索 | **MVP-3（当前优先，与写入并列验证）** |
+| `structured_memory_query` / `structured_memory_list_tags` / `structured_memory_get_by_id` | 新增 | agent/skill 统一检索、标签发现、按 ID 血缘追溯 | **MVP-3（首批已完成）** |
 | `StructuredMemoryConfirmationMiddleware` / `CommitService` / `mark_rejected` 等 | 新增 | 用户确认后再 promote | **暂缓（原 MVP-2，主流程验证后）** |
-| `StructuredMemoryIndexService.update_indexes()` | 新增 | 检索优化、标签索引 | MVP-3/4 |
+| `StructuredMemoryIndexService.update_indexes()` | 新增 | 检索优化、标签索引 | MVP-4 |
 | `StructuredMemoryRecordStatus`（或等价生命周期语义） | 可选/暂缓 | 无确认且无治理前**可不建**；归档/软删/替代需要稳定语义时引入 | **MVP-4 首选**；MVP-2 启用时可先上**提案子状态** |
 | 记忆生命周期治理（归档/冲突合并） | 新增 | 后续增强 | MVP-4 |
 
@@ -140,7 +142,7 @@ flowchart TD
 ### 当前进度
 
 - **已完成**：`structured_memory.enabled` / `structured_memory.store` 配置模型与加载链；`config.example.yaml` 文档与版本号；仓储全局入口与开关语义；`reset_structured_memory_repository_singleton()` 供测试/热切换；`deerflow.config` / `deerflow.memory` 对外导出补充。
-- **仍为缺口（按原优先级）**：MVP-1 写入工具与服务、MVP-3 统一查询工具（见下节）。
+- **仍为缺口（按当前优先级）**：MVP-3 检索质量验证（命中率、误召回、默认 tier 策略）、MVP-2 确认闭环、MVP-4 治理能力。
 
 ### 新增函数与配置清单（本阶段）
 
@@ -350,19 +352,36 @@ flowchart TD
 
 ### 当前进度
 
-- 未开始（与 MVP-1 **并列优先**，便于端到端验收）。
+- **已完成（首批）**：
+  - `StructuredMemorySearchService` 已落地：`search(...)`、`list_tags(...)`、`get_by_id(...)` 与格式化输出方法。
+  - 新增并注入 3 个查询工具：`structured_memory_query`、`structured_memory_list_tags`、`structured_memory_get_by_id`。
+  - 新增 `structured_memory.query.default_top_k`、`structured_memory.query.max_top_k`、`structured_memory.query.default_tiers`，并写入 `config.example.yaml`。
+  - `lead_agent` prompt 已注入 `<structured_memory_system>`：明确 raw/distilled/core 语义、`title/content/tags` 约束、标签分类建议、写入/检索链路与示例。
+  - 单测已覆盖查询能力核心路径与工具接线（`backend/tests/test_structured_memory_search.py`）。
+- **待验证/待增强**：
+  - 业务场景下检索命中率与噪声控制（`default_tiers`、`top_k` 参数调优）。
+  - rerank / 时间衰减 / 状态字段协同过滤等增强策略（见 MVP-4）。
 
 ### 新增函数与配置清单（MVP-3 实现）
 
 - `StructuredMemoryTool.query(query_text, tier_filter, tags, top_k, time_range)`（新增）
   - 作用：为 agent/skill 提供统一查询工具接口。
   - 设计理由：把复杂检索参数封装在工具层，降低 prompt 复杂度。
+- `structured_memory_list_tags(tier_filter)`（新增）
+  - 作用：返回当前库内可用标签与计数，解决 agent 不知道 tag 全貌的问题。
+  - 设计理由：让检索从“先发现分类”再到“按分类精查”，降低盲查噪声。
+- `structured_memory_get_by_id(memory_id, include_upstream)`（新增）
+  - 作用：按 ID 精确读取，并在需要时展开上游血缘（core -> distilled -> raw）。
+  - 设计理由：支持“总到细”的检索链路，在摘要不足时回溯证据层。
 - `StructuredMemorySearchService.search(...)`（新增）
   - 作用：执行主检索流程（过滤 -> 召回 -> 排序 -> 裁剪）。
   - 设计理由：把 query 编排从 tool 中剥离，便于复用与测试。
 - `StructuredMemorySearchService._build_where_filter(...)`（新增）
-  - 作用：构建 metadata 过滤条件（tier/tags/user/agent/time）。
+  - 作用：构建 metadata 过滤条件（tier/user/agent/time）。
   - 设计理由：过滤逻辑集中后，避免不同调用方语义不一致。
+- `StructuredMemorySearchService._record_matches_tags(...)`（新增）
+  - 作用：按 tags 做结果二次过滤（当前实现为召回后过滤）。
+  - 设计理由：兼容当前 Chroma metadata 形态下的 tag 过滤能力，先保证功能闭环。
 - `StructuredMemorySearchService._rerank_results(...)`（新增）
   - 作用：综合向量分数、时间衰减、**tier 等 metadata** 进行二次排序（首版可不依赖记录级 `status` 字段；若后续写入 `archived` 等标记，再纳入过滤或降权）。
   - 设计理由：企业知识往往同时要求「相关性 + 时效性」；排序策略与是否存在状态枚举解耦。
@@ -462,8 +481,8 @@ flowchart TD
 
 0. **MVP-0（配置基线）**：`structured_memory.enabled` / `store` 与加载链 — **已完成**（见 MVP-0「当前进度」）。
 1. **MVP-1**：agent 显式 **写入**工具 + `WriteService` + 配置护栏（`write.*` 等，叠在已有 `enabled`/`store` 之上）+ 单测。
-2. **MVP-3**：**查询**工具 + `SearchService` + 相关 skill/prompt 接入建议 + 单测。
-3. **业务验证**：在实际任务上观察写入频率、检索命中率、误写/噪声；再决定是否需要收紧 prompt、限制 `allowed_tiers`、或启用草案模式。
+2. **MVP-3（首批已完成）**：查询工具 + `SearchService` + prompt 注入 + 单测。
+3. **业务验证（当前进行中）**：在实际任务上观察写入频率、检索命中率、误写/噪声；再决定是否需要收紧 prompt、限制 `allowed_tiers`、或启用草案模式。
 4. **MVP-2（可选增量）**：确认中间件 + `CommitService` + 多轮修订，与写入路径用配置切换或并存。
 5. **MVP-4**：治理、观测、存储抽象。
 
