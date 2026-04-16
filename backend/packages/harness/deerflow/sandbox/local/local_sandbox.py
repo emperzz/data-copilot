@@ -1,6 +1,7 @@
 import errno
 import ntpath
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -73,14 +74,14 @@ class LocalSandbox(Sandbox):
         mapping (i.e. the one whose local_path is the longest prefix of the
         resolved path), similar to how ``_resolve_path`` handles container paths.
         """
-        resolved = str(Path(resolved_path).resolve())
+        resolved = Path(resolved_path).resolve().as_posix()
 
         best_mapping: PathMapping | None = None
         best_prefix_len = -1
 
         for mapping in self.path_mappings:
-            local_resolved = str(Path(mapping.local_path).resolve())
-            if resolved == local_resolved or resolved.startswith(local_resolved + os.sep):
+            local_resolved = Path(mapping.local_path).resolve().as_posix()
+            if resolved == local_resolved or resolved.startswith(local_resolved + "/"):
                 prefix_len = len(local_resolved)
                 if prefix_len > best_prefix_len:
                     best_prefix_len = prefix_len
@@ -110,7 +111,7 @@ class LocalSandbox(Sandbox):
             if path_str == container_path or path_str.startswith(container_path + "/"):
                 # Replace the container path prefix with local path
                 relative = path_str[len(container_path) :].lstrip("/")
-                resolved = str(Path(local_path) / relative) if relative else local_path
+                resolved = (Path(local_path) / relative).as_posix() if relative else Path(local_path).as_posix()
                 return resolved
 
         # No mapping found, return original path
@@ -127,19 +128,20 @@ class LocalSandbox(Sandbox):
             Container path if mapping exists, otherwise original path
         """
         normalized_path = path.replace("\\", "/")
-        path_str = str(Path(normalized_path).resolve())
+        resolved_host = Path(normalized_path).resolve()
+        path_str = resolved_host.as_posix()
 
         # Try each mapping (longest local path first for more specific matches)
         for mapping in sorted(self.path_mappings, key=lambda m: len(m.local_path), reverse=True):
-            local_path_resolved = str(Path(mapping.local_path).resolve())
+            local_path_resolved = Path(mapping.local_path).resolve().as_posix()
             if path_str == local_path_resolved or path_str.startswith(local_path_resolved + "/"):
                 # Replace the local path prefix with container path
                 relative = path_str[len(local_path_resolved) :].lstrip("/")
                 resolved = f"{mapping.container_path}/{relative}" if relative else mapping.container_path
                 return resolved
 
-        # No mapping found, return original path
-        return path_str
+        # No mapping found: preserve OS-native resolved string (matches pathlib on this platform).
+        return str(resolved_host)
 
     def _reverse_resolve_paths_in_output(self, output: str) -> str:
         """
@@ -151,8 +153,6 @@ class LocalSandbox(Sandbox):
         Returns:
             Output with local paths resolved to container paths
         """
-        import re
-
         # Sort mappings by local path length (longest first) for correct prefix matching
         sorted_mappings = sorted(self.path_mappings, key=lambda m: len(m.local_path), reverse=True)
 
@@ -163,16 +163,21 @@ class LocalSandbox(Sandbox):
         # Match paths like /Users/... or other absolute paths
         result = output
         for mapping in sorted_mappings:
-            # Escape the local path for use in regex
-            escaped_local = re.escape(str(Path(mapping.local_path).resolve()))
-            # Match the local path followed by optional path components with either separator
-            pattern = re.compile(escaped_local + r"(?:[/\\][^\s\"';&|<>()]*)?")
+            resolved_local = Path(mapping.local_path).resolve()
+            raw_base = resolved_local.as_posix()
+            resolved_base = str(resolved_local)
+            bases = {raw_base, resolved_base, raw_base.replace("/", "\\"), resolved_base.replace("/", "\\")}
+            for base in bases:
+                if not base:
+                    continue
+                escaped_local = re.escape(base).replace(r"\\", r"[/\\]")
+                pattern = re.compile(escaped_local + r"(?:[/\\][^\s\"';&|<>()]*)?")
 
-            def replace_match(match: re.Match) -> str:
-                matched_path = match.group(0)
-                return self._reverse_resolve_path(matched_path)
+                def replace_match(match: re.Match) -> str:
+                    matched_path = match.group(0)
+                    return self._reverse_resolve_path(matched_path)
 
-            result = pattern.sub(replace_match, result)
+                result = pattern.sub(replace_match, result)
 
         return result
 
@@ -186,8 +191,6 @@ class LocalSandbox(Sandbox):
         Returns:
             Command with container paths resolved to local paths
         """
-        import re
-
         # Sort mappings by length (longest first) for correct prefix matching
         sorted_mappings = sorted(self.path_mappings, key=lambda m: len(m.container_path), reverse=True)
 
@@ -223,8 +226,6 @@ class LocalSandbox(Sandbox):
         Returns:
             Content with container paths resolved to local paths (forward slashes).
         """
-        import re
-
         sorted_mappings = sorted(self.path_mappings, key=lambda m: len(m.container_path), reverse=True)
         if not sorted_mappings:
             return content

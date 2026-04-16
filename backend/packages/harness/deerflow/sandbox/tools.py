@@ -480,7 +480,7 @@ def mask_local_paths_in_output(output: str, thread_data: ThreadDataState | None)
                 matched_path = match.group(0)
                 if matched_path == _base:
                     return skills_container
-                relative = matched_path[len(_base) :].lstrip("/\\")
+                relative = matched_path[len(_base) :].lstrip("/\\").replace("\\", "/")
                 return f"{skills_container}/{relative}" if relative else skills_container
 
             result = pattern.sub(replace_skills, result)
@@ -499,7 +499,7 @@ def mask_local_paths_in_output(output: str, thread_data: ThreadDataState | None)
                 matched_path = match.group(0)
                 if matched_path == _base:
                     return _ACP_WORKSPACE_VIRTUAL_PATH
-                relative = matched_path[len(_base) :].lstrip("/\\")
+                relative = matched_path[len(_base) :].lstrip("/\\").replace("\\", "/")
                 return f"{_ACP_WORKSPACE_VIRTUAL_PATH}/{relative}" if relative else _ACP_WORKSPACE_VIRTUAL_PATH
 
             result = pattern.sub(replace_acp, result)
@@ -525,7 +525,7 @@ def mask_local_paths_in_output(output: str, thread_data: ThreadDataState | None)
                 matched_path = match.group(0)
                 if matched_path == _base:
                     return _virtual
-                relative = matched_path[len(_base) :].lstrip("/\\")
+                relative = matched_path[len(_base) :].lstrip("/\\").replace("\\", "/")
                 return f"{_virtual}/{relative}" if relative else _virtual
 
             result = pattern.sub(replace_match, result)
