@@ -6,14 +6,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 from deerflow.config.structured_memory_config import get_structured_memory_config
-from deerflow.memory.models import TITLE_MAX_LENGTH, MemoryTier
+from deerflow.memory._shared import (
+    _normalize_content,
+    _normalize_tags,
+    _normalize_title,
+)
+from deerflow.memory.models import TITLE_MAX_LENGTH, MemoryTier, StructuredMemoryWriteError
 from deerflow.memory.repository import StructuredMemoryRepository, get_structured_memory_repository
 from deerflow.memory.tag_manifest_service import get_tag_manifest_service
-
-
-class StructuredMemoryWriteError(ValueError):
-    """User- or agent-facing validation failure for a structured memory write."""
-
 
 MemoryTierLiteral = Literal["raw", "distilled", "core"]
 
@@ -25,43 +25,6 @@ class StructuredMemoryWriteResult:
     memory_id: str
     tier: MemoryTierLiteral
     title: str
-
-
-def _normalize_tags(tags: list[str] | None) -> list[str]:
-    if not tags:
-        return []
-    seen: set[str] = set()
-    out: list[str] = []
-    for raw in tags:
-        t = raw.strip()
-        if not t or t in seen:
-            continue
-        seen.add(t)
-        out.append(t)
-    return out
-
-
-def _normalize_title(title: str) -> str:
-    t = title.strip()
-    if not t:
-        raise StructuredMemoryWriteError("title must be non-empty after trimming whitespace.")
-    if len(t) > TITLE_MAX_LENGTH:
-        raise StructuredMemoryWriteError(
-            f"title exceeds maximum length ({TITLE_MAX_LENGTH} characters); shorten the title.",
-        )
-    return t
-
-
-def _normalize_content(content: str, *, max_len: int) -> str:
-    c = content.strip()
-    if not c:
-        raise StructuredMemoryWriteError("content must be non-empty after trimming whitespace.")
-    if len(c) > max_len:
-        raise StructuredMemoryWriteError(
-            f"content exceeds structured_memory.write.max_content_length ({max_len} characters); "
-            "summarize or split into multiple records.",
-        )
-    return c
 
 
 class StructuredMemoryWriteService:
@@ -94,7 +57,7 @@ class StructuredMemoryWriteService:
         sm = get_structured_memory_config()
         if self._repository is None and not sm.enabled:
             raise StructuredMemoryWriteError(
-                "Structured memory is disabled; set structured_memory.enabled to true in config.yaml.",
+                "Structured memory is disabled; set structured_memory.enabled to true in config.yaml."
             )
         max_len = sm.write.max_content_length
         norm_title = _normalize_title(title)
@@ -107,7 +70,7 @@ class StructuredMemoryWriteService:
             if not sid:
                 raise StructuredMemoryWriteError(
                     "raw tier requires a non-empty source_thread_id: the LangGraph conversation thread "
-                    "this raw row documents (never inferred in the service layer).",
+                    "this raw row documents (never inferred in the service layer)."
                 )
             record = repo.create_raw_memory(
                 title=norm_title,
@@ -181,7 +144,7 @@ def _ensure_raw_ids_exist(repo: StructuredMemoryRepository, ids: list[str]) -> N
     missing = [i for i in ids if repo.get_raw_memory(i) is None]
     if missing:
         raise StructuredMemoryWriteError(
-            f"raw_memory_ids reference unknown raw record(s): {', '.join(missing)}",
+            f"raw_memory_ids reference unknown raw record(s): {', '.join(missing)}"
         )
 
 
@@ -189,7 +152,7 @@ def _ensure_distilled_ids_exist(repo: StructuredMemoryRepository, ids: list[str]
     missing = [i for i in ids if repo.get_distilled_memory(i) is None]
     if missing:
         raise StructuredMemoryWriteError(
-            f"distilled_memory_ids reference unknown distilled record(s): {', '.join(missing)}",
+            f"distilled_memory_ids reference unknown distilled record(s): {', '.join(missing)}"
         )
 
 

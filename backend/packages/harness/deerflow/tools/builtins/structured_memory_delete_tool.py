@@ -29,6 +29,4 @@ def structured_memory_delete_tool(memory_id: str) -> str:
         result = service.delete_memory(memory_id=memory_id)
     except StructuredMemoryMutationError as exc:
         return f"structured_memory_delete failed: {exc}"
-    except Exception as exc:
-        return f"structured_memory_delete error: {exc}"
     return format_mutation_success(result)

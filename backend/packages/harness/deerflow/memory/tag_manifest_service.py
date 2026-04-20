@@ -146,7 +146,8 @@ class TagManifestService:
         with self._lock:
             if not self._cache_is_fresh(ttl):
                 self._reload_cache()
-            entries = _project_entries(self._state.counts, allowed)
+            counts_snapshot = {tag: dict(tiers) for tag, tiers in self._state.counts.items()}
+        entries = _project_entries(counts_snapshot, allowed)
         entries.sort(key=lambda e: (-e.total, e.tag))
         return entries
 
@@ -257,19 +258,42 @@ class TagManifestService:
         conditionally concat without adding blank lines.
         """
         entries = self.snapshot()
-        if not entries:
-            return ""
-        limit = max_tags or get_structured_memory_config().tag_manifest.max_tags_in_prompt
-        limited = entries[: max(1, limit)]
-        lines: list[str] = [
-            "<structured_memory_tag_manifest>",
-            f"Known tags ({len(limited)} of {len(entries)} shown; format: tag total [tier:count ...]):",
-        ]
-        for entry in limited:
-            parts = " ".join(f"{tier}:{count}" for tier, count in sorted(entry.counts_by_tier.items()))
-            lines.append(f"- {entry.tag} {entry.total} [{parts}]")
-        lines.append("</structured_memory_tag_manifest>")
-        return "\n".join(lines)
+        return _format_snapshot_text(entries, max_tags=max_tags)
+
+    def snapshot_text_cached(self, *, max_tags: int | None = None) -> str:
+        """Render from in-memory cache only; never touches persistence.
+
+        This is safe for synchronous call sites running on an event loop thread
+        where any blocking filesystem operation would be rejected.
+        """
+        with self._lock:
+            if not self._state.is_loaded:
+                return ""
+            counts_snapshot = {tag: dict(tiers) for tag, tiers in self._state.counts.items()}
+        entries = _project_entries(counts_snapshot, allowed=None)
+        entries.sort(key=lambda e: (-e.total, e.tag))
+        return _format_snapshot_text(entries, max_tags=max_tags)
+
+
+def _format_snapshot_text(
+    entries: list[TagManifestEntry],
+    *,
+    max_tags: int | None,
+) -> str:
+    """Render tag manifest entries into prompt-friendly text."""
+    if not entries:
+        return ""
+    limit = max_tags or get_structured_memory_config().tag_manifest.max_tags_in_prompt
+    limited = entries[: max(1, limit)]
+    lines: list[str] = [
+        "<structured_memory_tag_manifest>",
+        f"Known tags ({len(limited)} of {len(entries)} shown; format: tag total [tier:count ...]):",
+    ]
+    for entry in limited:
+        parts = " ".join(f"{tier}:{count}" for tier, count in sorted(entry.counts_by_tier.items()))
+        lines.append(f"- {entry.tag} {entry.total} [{parts}]")
+    lines.append("</structured_memory_tag_manifest>")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

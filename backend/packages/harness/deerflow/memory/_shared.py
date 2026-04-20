@@ -230,3 +230,52 @@ def resolve_tier_filter(tier_filter: Iterable[str | MemoryTier] | None) -> set[s
             except ValueError:
                 continue
     return allowed or None
+
+
+# ---------------------------------------------------------------------------
+# Normalize helpers (shared across write/mutation services)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_tags(tags: list[str] | None) -> list[str]:
+    """Deduplicate tags, strip whitespace, skip empty strings."""
+    if not tags:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in tags:
+        t = raw.strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
+def _normalize_title(title: str) -> str:
+    """Strip title, raise if empty, truncate if too long."""
+    from deerflow.memory.models import StructuredMemoryWriteError, TITLE_MAX_LENGTH
+
+    t = title.strip()
+    if not t:
+        raise StructuredMemoryWriteError("title must be non-empty after trimming whitespace.")
+    if len(t) > TITLE_MAX_LENGTH:
+        raise StructuredMemoryWriteError(
+            f"title exceeds maximum length ({TITLE_MAX_LENGTH} characters); shorten the title."
+        )
+    return t
+
+
+def _normalize_content(content: str, *, max_len: int) -> str:
+    """Strip content, raise if empty, raise if exceeds max_len."""
+    from deerflow.memory.models import StructuredMemoryWriteError
+
+    c = content.strip()
+    if not c:
+        raise StructuredMemoryWriteError("content must be non-empty after trimming whitespace.")
+    if len(c) > max_len:
+        raise StructuredMemoryWriteError(
+            f"content exceeds structured_memory.write.max_content_length ({max_len} characters); "
+            "summarize or split into multiple records."
+        )
+    return c

@@ -126,9 +126,10 @@ flowchart TD
     O -- 新事实 --> P[structured_memory_write tier=raw]
     O -- 多 raw 归纳 --> Q[structured_memory_write tier=distilled]
     O -- 稳定政策 --> R[structured_memory_write tier=core]
-    P --> Z
-    Q --> Z
-    R --> Z
+    R --> Y[TagManifestService.bump_counters]
+    Q --> Y
+    P --> Y
+    Y --> Z
 ```
 
 ### 6.1 读路径（每次需要业务知识时）

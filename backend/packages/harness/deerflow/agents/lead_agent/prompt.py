@@ -763,10 +763,22 @@ def _build_structured_memory_tag_manifest_section(sm_config: object) -> str:
     try:
         from deerflow.memory.tag_manifest_service import get_tag_manifest_service
 
-        return get_tag_manifest_service().snapshot_text()
+        service = get_tag_manifest_service()
+        if _is_running_event_loop_thread():
+            return service.snapshot_text_cached()
+        return service.snapshot_text()
     except Exception:
         logger.exception("Failed to build structured memory tag manifest section")
         return ""
+
+
+def _is_running_event_loop_thread() -> bool:
+    """Return True when called on a thread with an active asyncio loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 def _build_acp_section() -> str:

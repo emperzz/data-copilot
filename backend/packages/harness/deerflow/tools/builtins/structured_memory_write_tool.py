@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Literal
 
 from langchain.tools import ToolRuntime, tool
-from langgraph.config import get_config
 from langgraph.typing import ContextT
 
 from deerflow.agents.thread_state import ThreadState
@@ -16,18 +15,16 @@ from deerflow.memory.structured_memory_write_service import (
 )
 
 
-def _get_thread_id(runtime: ToolRuntime[ContextT, ThreadState]) -> str | None:
+def _resolve_source_thread_id(
+    runtime: ToolRuntime[ContextT, ThreadState], explicit: str | None
+) -> str | None:
+    """Resolve source_thread_id: prefer explicit value, fall back to runtime context."""
+    if explicit and str(explicit).strip():
+        return explicit
     if runtime.context and runtime.context.get("thread_id"):
         return str(runtime.context["thread_id"])
     cfg = getattr(runtime, "config", None) or {}
-    tid = cfg.get("configurable", {}).get("thread_id")
-    if tid:
-        return str(tid)
-    try:
-        alt = get_config().get("configurable", {}).get("thread_id")
-        return str(alt) if alt else None
-    except RuntimeError:
-        return None
+    return str(cfg.get("configurable", {}).get("thread_id") or "").strip() or None
 
 
 @tool("structured_memory_write", parse_docstring=True)
@@ -52,9 +49,9 @@ def structured_memory_write_tool(
     troubleshooting notes, table logic). Do not use it for ephemeral chat filler.
 
     Tiers:
-    - **raw**: requires ``source_thread_id`` at write time. If omitted, this tool attempts to use
-      the current runtime LangGraph ``thread_id`` automatically. When recording material that
-      belongs to another conversation, pass that historical thread id explicitly.
+    - **raw**: requires ``source_thread_id``. If omitted and the current runtime carries
+      a ``thread_id``, that value is used automatically. When recording material from
+      another conversation, pass that session's thread id explicitly.
     - **distilled**: ``raw_memory_ids`` (≥1) required; ``source_thread_id`` is ignored.
     - **core**: ``distilled_memory_ids`` (≥1) required; ``source_thread_id`` is ignored.
 
@@ -74,17 +71,7 @@ def structured_memory_write_tool(
         source_agent: Optional logical writer name (defaults in repository).
         user: Optional user id (defaults in repository).
     """
-    resolved_source_thread_id = source_thread_id
-    if tier == "raw" and not (resolved_source_thread_id or "").strip():
-        resolved_source_thread_id = _get_thread_id(runtime)
-    if tier == "raw" and not (resolved_source_thread_id or "").strip():
-        return (
-            "structured_memory_write failed: tier raw requires a non-empty source_thread_id "
-            "(the LangGraph thread this memory documents). If this write is for the current "
-            "conversation, ensure runtime carries thread_id; for another session, pass that "
-            "session's thread id explicitly."
-        )
-
+    resolved_source_thread_id = _resolve_source_thread_id(runtime, source_thread_id)
     service = StructuredMemoryWriteService()
     try:
         result = service.normalize_and_write(

@@ -6,9 +6,13 @@ from dataclasses import dataclass
 from typing import Literal
 
 from deerflow.config.structured_memory_config import get_structured_memory_config
-from deerflow.memory.models import MemoryTier
+from deerflow.memory._shared import (
+    _normalize_content,
+    _normalize_tags,
+    _normalize_title,
+)
+from deerflow.memory.models import MemoryTier, StructuredMemoryWriteError
 from deerflow.memory.repository import StructuredMemoryRepository, get_structured_memory_repository
-from deerflow.memory.structured_memory_write_service import _normalize_content, _normalize_tags, _normalize_title
 from deerflow.memory.tag_manifest_service import get_tag_manifest_service
 
 MutationActionLiteral = Literal["update", "delete"]

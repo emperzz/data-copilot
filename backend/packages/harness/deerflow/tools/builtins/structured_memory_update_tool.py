@@ -46,6 +46,4 @@ def structured_memory_update_tool(
         )
     except StructuredMemoryMutationError as exc:
         return f"structured_memory_update failed: {exc}"
-    except Exception as exc:
-        return f"structured_memory_update error: {exc}"
     return format_mutation_success(result)

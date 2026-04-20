@@ -13,11 +13,13 @@ TITLE_MAX_LENGTH = 500
 
 
 class MemoryTier(StrEnum):
-    """Supported memory tiers."""
-
     RAW = "raw"
     DISTILLED = "distilled"
     CORE = "core"
+
+
+class StructuredMemoryWriteError(ValueError):
+    """User- or agent-facing validation failure for a structured memory write."""
 
 
 class MemoryRecordCommon(BaseModel):

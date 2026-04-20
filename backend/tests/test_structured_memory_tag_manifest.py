@@ -432,6 +432,37 @@ def test_prompt_section_omits_manifest_when_disabled_via_config(
     assert "<structured_memory_tag_manifest>" not in rendered
 
 
+def test_prompt_manifest_uses_cached_snapshot_in_event_loop_thread(monkeypatch) -> None:
+    from deerflow.agents.lead_agent import prompt as prompt_module
+
+    load_structured_memory_config_from_dict({"enabled": True, "store": "chroma"})
+
+    class _FakeService:
+        def __init__(self) -> None:
+            self.snapshot_called = False
+            self.snapshot_cached_called = False
+
+        def snapshot_text(self) -> str:
+            self.snapshot_called = True
+            return "<structured_memory_tag_manifest>sync</structured_memory_tag_manifest>"
+
+        def snapshot_text_cached(self) -> str:
+            self.snapshot_cached_called = True
+            return "<structured_memory_tag_manifest>cached</structured_memory_tag_manifest>"
+
+    fake_service = _FakeService()
+    monkeypatch.setattr(
+        "deerflow.memory.tag_manifest_service.get_tag_manifest_service",
+        lambda: fake_service,
+    )
+    monkeypatch.setattr(prompt_module, "_is_running_event_loop_thread", lambda: True)
+
+    rendered = prompt_module._build_structured_memory_section()
+    assert "cached" in rendered
+    assert fake_service.snapshot_cached_called is True
+    assert fake_service.snapshot_called is False
+
+
 def test_prompt_section_empty_when_structured_memory_disabled() -> None:
     from deerflow.agents.lead_agent import prompt as prompt_module
 
