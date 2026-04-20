@@ -58,3 +58,21 @@ class CoreMemoryRecord(MemoryRecordCommon):
     """Core memory synthesized from one or more distilled rows."""
 
     distilled_memory_ids: list[str] = Field(..., min_length=1)
+
+
+class TagManifestRecord(BaseModel):
+    """Persisted manifest entry for one tag (counts + extension fields).
+
+    The counts represent how many records per tier currently carry this tag.
+    ``definition`` and ``scope_keywords`` are reserved for the upcoming
+    ``TagDefinitionService``; they default to empty in this release so the
+    schema can accept future metadata without another migration.
+    """
+
+    tag: str = Field(..., min_length=1)
+    counts_by_tier: dict[str, int] = Field(default_factory=dict)
+    total: int = Field(default=0, ge=0)
+    created_at: str = Field(..., min_length=1)
+    updated_at: str = Field(..., min_length=1)
+    definition: str = Field(default="")
+    scope_keywords: list[str] = Field(default_factory=list)

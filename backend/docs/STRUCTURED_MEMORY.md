@@ -175,7 +175,9 @@ prompt 中已约束如下命名维度（建议每条 3–8 个标签）：
 
 - 默认目录：`backend/.deer-flow/memory/chromadb/`（与 `memory.json` 同级）。
 - 可通过 `memory.storage_path` 间接改变（structured memory 取其父目录）。
-- 三个 collection：`memory_raw` / `memory_distilled` / `memory_core`。
+- 四个 collection：
+  - `memory_raw` / `memory_distilled` / `memory_core` — 三层记忆正文
+  - `memory_tag_manifest` — 每个 tag 的跨层计数快照（`counts_json` 存 `{tier: count}`，并预留 `definition`、`scope_keywords_json` 用于后续 `TagDefinitionService`）。manifest 由 `StructuredMemoryRepository` 与 `TagManifestService` 协同维护：写入/更新/删除会 write-through 到该 collection，服务层再叠一层 TTL 读缓存。
 
 ## 10. 常见错误与排查
 

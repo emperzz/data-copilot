@@ -24,11 +24,13 @@ from deerflow.memory.models import (
     CoreMemoryRecord,
     DistilledMemoryRecord,
     RawMemoryRecord,
+    TagManifestRecord,
 )
 
 RAW_COLLECTION_NAME = "memory_raw"
 DISTILLED_COLLECTION_NAME = "memory_distilled"
 CORE_COLLECTION_NAME = "memory_core"
+TAG_MANIFEST_COLLECTION_NAME = "memory_tag_manifest"
 
 
 def utc_now_iso_z() -> str:
@@ -64,6 +66,43 @@ def _fallback_title(document: str, *, max_len: int = TITLE_MAX_LENGTH) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
+def _tag_manifest_from_metadata(tag_id: str, metadata: dict[str, Any]) -> TagManifestRecord | None:
+    """Rebuild a ``TagManifestRecord`` from Chroma metadata; ``None`` on bad rows."""
+    tag = (str(metadata.get("tag") or tag_id)).strip()
+    if not tag:
+        return None
+    counts_raw = metadata.get("counts_json")
+    counts: dict[str, int] = {}
+    if isinstance(counts_raw, str) and counts_raw:
+        try:
+            parsed = json.loads(counts_raw)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            for tier_key, value in parsed.items():
+                try:
+                    count_int = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if count_int > 0:
+                    counts[str(tier_key)] = count_int
+    total_raw = metadata.get("total")
+    try:
+        total = int(total_raw) if total_raw is not None else sum(counts.values())
+    except (TypeError, ValueError):
+        total = sum(counts.values())
+    fallback_ts = utc_now_iso_z()
+    return TagManifestRecord(
+        tag=tag,
+        counts_by_tier=counts,
+        total=total,
+        created_at=str(metadata.get("created_at") or fallback_ts),
+        updated_at=str(metadata.get("updated_at") or fallback_ts),
+        definition=str(metadata.get("definition") or ""),
+        scope_keywords=_json_to_string_list(metadata.get("scope_keywords_json")),
+    )
+
+
 def _resolve_structured_persist_directory() -> Path:
     """Resolve structured memory storage directory using memory.json path rules."""
     config = get_memory_config()
@@ -92,6 +131,7 @@ class StructuredMemoryRepository:
         self._raw_collection = self._client.get_or_create_collection(name=RAW_COLLECTION_NAME)
         self._distilled_collection = self._client.get_or_create_collection(name=DISTILLED_COLLECTION_NAME)
         self._core_collection = self._client.get_or_create_collection(name=CORE_COLLECTION_NAME)
+        self._tag_manifest_collection = self._client.get_or_create_collection(name=TAG_MANIFEST_COLLECTION_NAME)
         self._default_user = default_user
         self._default_source_agent = default_source_agent
 
@@ -427,6 +467,94 @@ class StructuredMemoryRepository:
         if not ids:
             return False
         collection.delete(ids=[memory_id])
+        return True
+
+    # ------------------------------------------------------------------
+    # tag manifest (sibling collection used by TagManifestService)
+    # ------------------------------------------------------------------
+
+    def get_tag_manifest(self, tag: str) -> TagManifestRecord | None:
+        """Return persisted manifest for ``tag`` or ``None`` if missing."""
+        normalized = tag.strip()
+        if not normalized:
+            return None
+        result = self._tag_manifest_collection.get(ids=[normalized], include=["metadatas"])
+        ids = result.get("ids") or []
+        if not ids:
+            return None
+        metadata = (result.get("metadatas") or [{}])[0] or {}
+        return _tag_manifest_from_metadata(normalized, metadata)
+
+    def list_tag_manifest(self) -> list[TagManifestRecord]:
+        """Return every persisted tag manifest record (unordered)."""
+        if self._tag_manifest_collection.count() == 0:
+            return []
+        result = self._tag_manifest_collection.get(include=["metadatas"])
+        records: list[TagManifestRecord] = []
+        for idx, tag_id in enumerate(result.get("ids") or []):
+            metadata = (result.get("metadatas") or [{}])[idx] or {}
+            record = _tag_manifest_from_metadata(tag_id, metadata)
+            if record is not None:
+                records.append(record)
+        return records
+
+    def upsert_tag_manifest(
+        self,
+        *,
+        tag: str,
+        counts_by_tier: dict[str, int],
+        definition: str | None = None,
+        scope_keywords: list[str] | None = None,
+    ) -> TagManifestRecord:
+        """Insert or update one tag manifest record; preserves ``created_at``."""
+        normalized_tag = tag.strip()
+        if not normalized_tag:
+            raise ValueError("tag must be non-empty")
+        filtered = {str(t): int(c) for t, c in (counts_by_tier or {}).items() if int(c) > 0}
+        total = sum(filtered.values())
+        now = utc_now_iso_z()
+
+        existing_meta: dict[str, Any] = {}
+        existing = self._tag_manifest_collection.get(ids=[normalized_tag], include=["metadatas"])
+        if existing.get("ids"):
+            existing_meta = (existing.get("metadatas") or [{}])[0] or {}
+        created_at = str(existing_meta.get("created_at") or now)
+
+        metadata = {
+            "tag": normalized_tag,
+            "counts_json": json.dumps(filtered, ensure_ascii=False, sort_keys=True),
+            "total": total,
+            "created_at": created_at,
+            "updated_at": now,
+            "definition": definition if definition is not None else str(existing_meta.get("definition") or ""),
+            "scope_keywords_json": _string_list_to_json(
+                scope_keywords if scope_keywords is not None else _json_to_string_list(existing_meta.get("scope_keywords_json")),
+            ),
+        }
+        self._tag_manifest_collection.upsert(
+            ids=[normalized_tag],
+            documents=[normalized_tag],
+            metadatas=[metadata],
+        )
+        return TagManifestRecord(
+            tag=normalized_tag,
+            counts_by_tier=filtered,
+            total=total,
+            created_at=created_at,
+            updated_at=now,
+            definition=str(metadata["definition"]),
+            scope_keywords=_json_to_string_list(metadata["scope_keywords_json"]),
+        )
+
+    def delete_tag_manifest(self, tag: str) -> bool:
+        """Remove one tag manifest record; returns whether it existed."""
+        normalized = tag.strip()
+        if not normalized:
+            return False
+        existing = self._tag_manifest_collection.get(ids=[normalized], include=[])
+        if not (existing.get("ids") or []):
+            return False
+        self._tag_manifest_collection.delete(ids=[normalized])
         return True
 
 

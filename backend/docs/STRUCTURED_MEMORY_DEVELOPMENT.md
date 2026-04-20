@@ -11,14 +11,15 @@
 ```
 backend/packages/harness/deerflow/
 ├── config/
-│   └── structured_memory_config.py      # 开关 + 写/查护栏配置（Pydantic）
+│   └── structured_memory_config.py      # 开关 + 写/查/manifest 护栏配置（Pydantic）
 └── memory/
     ├── __init__.py                      # 对外导出
-    ├── models.py                        # MemoryTier + Raw/Distilled/Core 数据契约
-    ├── repository.py                    # ChromaDB 实现（CRUD + lineage 字段持久化）
-    ├── structured_memory_write_service.py     # 校验 + 规范化 + 写入分发
+    ├── models.py                        # MemoryTier + Raw/Distilled/Core + TagManifestRecord
+    ├── repository.py                    # Chroma 4 个 collection：raw/distilled/core + tag_manifest
+    ├── structured_memory_write_service.py     # 校验 + 规范化 + 写入分发（成功后 bump manifest）
     ├── structured_memory_search_service.py    # search / list_tags / get_by_id + 格式化
-    └── structured_memory_mutation_service.py  # update / delete + 下游引用保护
+    ├── structured_memory_mutation_service.py  # update / delete + 下游引用保护 + manifest 差量
+    └── tag_manifest_service.py                 # TTL 读缓存 + write-through 持久化 + rebuild_from_tiers
 backend/packages/harness/deerflow/tools/builtins/
 ├── structured_memory_write_tool.py          # @tool wrapper, runtime thread_id 自动注入
 ├── structured_memory_update_tool.py
@@ -40,25 +41,26 @@ backend/tests/
 | 能力 | 关键模块 | 备注 |
 |---|---|---|
 | 配置开关 + 单例 | `structured_memory_config.py`、`repository.get_structured_memory_repository` | `enabled=false` 抛 `StructuredMemoryDisabledError` |
-| Chroma 持久化 | `StructuredMemoryRepository` | 三 collection：`memory_raw/distilled/core` |
-| 显式写入 | `StructuredMemoryWriteService.normalize_and_write` + `structured_memory_write` 工具 | 校验长度、tier 字段；血缘前置存在性校验 |
+| Chroma 持久化 | `StructuredMemoryRepository` | 四 collection：`memory_raw/distilled/core` + `memory_tag_manifest` |
+| 显式写入 | `StructuredMemoryWriteService.normalize_and_write` + `structured_memory_write` 工具 | 校验长度、tier 字段；血缘前置存在性校验；成功后 bump tag manifest |
 | 检索 | `StructuredMemorySearchService.search` + `structured_memory_query` | 默认 `core+distilled`；tag 过滤为召回后过滤 |
-| 标签发现 | `list_tags` + `structured_memory_list_tags` | 按 tier 维度计数 |
+| 标签发现 | `list_tags` + `structured_memory_list_tags` | 按 tier 维度计数（基于全表扫描） |
 | 血缘回溯 | `get_by_id(include_upstream=True)` | core → distilled → raw 最深 2 层 |
-| 编辑 / 删除 | `StructuredMemoryMutationService` + 对应工具 | 删除时强制下游优先 |
-| Prompt 接入 | `lead_agent/prompt.py::_build_structured_memory_section` | 仅在 `enabled=true` 时注入说明 |
+| 编辑 / 删除 | `StructuredMemoryMutationService` + 对应工具 | 删除时强制下游优先；完成后推送 manifest 差量 |
+| **Tag Manifest 持久化 + 计数缓存** | `TagManifestService` + `StructuredMemoryRepository.upsert_tag_manifest / get / list / delete` | Write-through 到 `memory_tag_manifest`；服务层 TTL 读缓存；首次运行自动从三层记忆 bootstrap；`rebuild_from_tiers()` 做显式漂移修复 |
+| Prompt 接入 | `lead_agent/prompt.py::_build_structured_memory_section` | 仅在 `enabled=true` 时注入说明；`tag_manifest.inject_in_prompt` 开关 manifest 段落 |
 
 ### 1.2 当前缺口（与目标流程图对照）
 
 | 目标流程节点 | 当前状态 |
 |---|---|
-| Agent 启动**同步 Tag 清单 + 各层计数**注入 prompt | ❌ 未实现，需新增 `TagManifestService` |
+| Agent 启动**同步 Tag 清单 + 各层计数**注入 prompt | ✅ 已实现：`TagManifestService.snapshot_text` 接入 `_build_structured_memory_section`；Chroma 持久化 + TTL 读缓存 |
 | 对话类型判定（咨询/任务） | ❌ 未实现，统一交给 agent prompt 自由决定 |
 | **统一检索逻辑**（Core → Distilled → Raw 级联 + 附件回放） | ⚠️ 检索本身有，但级联与附件展开未自动化，靠 agent 多次工具调用 |
-| Tag 治理（Tag 是否可直接使用 / 扩展定义域 / 新建） | ❌ 未实现，需新增 `TagDefinitionService` 与持久化 |
+| Tag 治理（Tag 是否可直接使用 / 扩展定义域 / 新建） | ⚠️ manifest 已预留 `definition` / `scope_keywords`；`TagDefinitionService` 逻辑仍待实现 |
 | 写前**相似记忆检索 + 冲突检测** | ❌ 未实现，需新增 `WritePreflightService` |
 | 一致 → 反馈无需新增 / 冲突 → 等待用户反馈 | ❌ 一致路径未实现；冲突需配合澄清流（暂缓的 MVP-2） |
-| 各 Tag 各 tier 记忆**计数缓存与刷新** | ❌ 现有 `list_tags` 全表扫描，未做增量计数与缓存 |
+| 各 Tag 各 tier 记忆**计数缓存与刷新** | ✅ 已实现：`bump_counters` write-through + `rebuild_from_tiers` 漂移修复 |
 
 后续开发任务围绕这些缺口展开。
 
@@ -76,7 +78,7 @@ flowchart LR
         WriteSvc["StructuredMemoryWriteService"]
         SearchSvc["StructuredMemorySearchService"]
         MutationSvc["StructuredMemoryMutationService"]
-        TagSvc["TagManifestService (规划)"]
+        TagSvc["TagManifestService"]
         Preflight["WritePreflightService (规划)"]
     end
     subgraph Repo["Repository Layer"]
@@ -86,6 +88,7 @@ flowchart LR
         RawCol[(memory_raw)]
         DistilledCol[(memory_distilled)]
         CoreCol[(memory_core)]
+        TagCol[(memory_tag_manifest)]
     end
     Config["structured_memory_config.py"]
 
@@ -96,14 +99,15 @@ flowchart LR
     WriteSvc --> Preflight
     Preflight --> SearchSvc
     Preflight --> Repository
-    WriteSvc --> Repository
+    WriteSvc -->|"create + bump"| Repository
     SearchSvc --> Repository
-    MutationSvc --> Repository
-    TagSvc --> Repository
-    Prompt -.->|"启动注入"| TagSvc
+    MutationSvc -->|"update/delete + bump"| Repository
+    TagSvc -->|"upsert/get/list/delete"| Repository
+    Prompt -.->|"snapshot_text"| TagSvc
     Repository --> RawCol
     Repository --> DistilledCol
     Repository --> CoreCol
+    Repository --> TagCol
     Config --> Repository
 ```
 
@@ -170,31 +174,46 @@ flowchart TD
 
 下面按步骤把每个节点对应到代码增量。
 
-### 3.1 启动同步 Tag 清单（新增 `TagManifestService`）
+### 3.1 启动同步 Tag 清单（`TagManifestService` — **已落地**）
 
-**目标**：每次 agent 构建 prompt 时拿到 `{tag → {definition, tier_counts}}` 的快照，注入到 `<structured_memory_system>` 中，让模型在检索/写入前就知道"现有分类长什么样、各层多少条"。
+**目标**：每次 agent 构建 prompt 时拿到 `{tag → tier_counts}` 的快照，注入到 `<structured_memory_system>` 中，让模型在检索/写入前就知道"现有分类长什么样、各层多少条"。
 
-**新增模块**：`backend/packages/harness/deerflow/memory/tag_manifest_service.py`
+**模块位置**：`backend/packages/harness/deerflow/memory/tag_manifest_service.py` + `StructuredMemoryRepository.*_tag_manifest` 方法。
+
+**数据契约**：`TagManifestRecord`（见 `memory/models.py`）
 
 ```python
-@dataclass(frozen=True)
-class TagManifestEntry:
+class TagManifestRecord(BaseModel):
     tag: str
-    definition: str | None        # 来自 TagDefinitionStore，可空
-    counts_by_tier: dict[str, int]  # {"raw": 3, "distilled": 1, "core": 0}
+    counts_by_tier: dict[str, int]   # {"raw": 3, "distilled": 1}
+    total: int
+    created_at: str
+    updated_at: str
+    definition: str = ""             # 预留：TagDefinitionService 后续填充
+    scope_keywords: list[str] = []   # 预留
+```
 
+**服务 API**（精简）：
+
+```python
 class TagManifestService:
-    def snapshot(self, *, tier_filter: list[MemoryTier] | None = None) -> list[TagManifestEntry]: ...
-    def bump_counters(self, *, tags: list[str], tier: MemoryTier, delta: int = 1) -> None: ...
-    def invalidate(self) -> None: ...
+    def snapshot(self, *, tier_filter=None) -> list[TagManifestEntry]: ...
+    def bump_counters(self, *, tags, tier, delta) -> None: ...   # write-through
+    def invalidate(self) -> None: ...                            # 清 TTL 缓存
+    def rebuild_from_tiers(self) -> None: ...                    # 显式漂移修复
+    def snapshot_text(self, *, max_tags=None) -> str: ...        # prompt 段渲染
 ```
 
 **实现要点**：
-- 内部用进程级缓存 + TTL（建议 60s，受 `structured_memory.tag_manifest.cache_ttl_seconds` 控制）；写入路径触发 `bump_counters` 而不是全表重扫。
-- 首版可基于 `SearchService.list_tags` 直接构造，后续优化为单独 collection 或本地索引。
-- 对外暴露 `snapshot_text(max_tags=...)` 渲染为 prompt 片段，避免 prompt 中出现超长列表。
 
-**Prompt 接入**：在 `lead_agent/prompt.py::_build_structured_memory_section` 末尾追加 `tag_manifest_service.snapshot_text(...)` 输出，并支持开关 `structured_memory.tag_manifest.inject_in_prompt`。
+- **持久化**：`StructuredMemoryRepository` 新增 `memory_tag_manifest` collection，每条记录 id 为 tag 字符串，metadata 包括 `counts_json`、`total`、`created_at/updated_at`、`definition`、`scope_keywords_json`。所有 CRUD 走 `repo.upsert_tag_manifest / get_tag_manifest / list_tag_manifest / delete_tag_manifest`。
+- **Write-through**：`bump_counters` 永远先读当前 tag 记录 → 叠加 delta → upsert 回 Chroma（所有 tier 计数降到 0 时删除记录），再同步更新内存缓存。这样即使没跑过 `snapshot()`，写入也能被后续 agent 会话看到。
+- **TTL 读缓存**：`snapshot()` 检查缓存是否过期（`structured_memory.tag_manifest.cache_ttl_seconds`，默认 60s，0 = 禁用）；过期则从 `repo.list_tag_manifest()` 一次性读回所有 tag。
+- **首次 bootstrap**：如果 `list_tag_manifest()` 返回空，但三层 collection 里有 tag 数据（老库升级场景），`_reload_cache` 会 full-scan 三层 → 批量 upsert 到 manifest → 再返回。首次运行后续读都走 manifest collection，不再扫 tier。
+- **Prompt 接入**：`_build_structured_memory_section` 末尾调用 `_build_structured_memory_tag_manifest_section(sm_config)`，后者调 `snapshot_text()`。受 `structured_memory.tag_manifest.inject_in_prompt` 控制；任何异常只记 log，不阻塞主 guidance。
+- **漂移修复**：手工编辑、测试绕过 service 直接 `repo.create_*` 等会导致 manifest 与 tier 不一致时，调 `rebuild_from_tiers()` → 重扫 + upsert 所有活 tag + 删除已不存在的 tag + `invalidate()`。
+
+**相关配置**（`structured_memory.tag_manifest`）：`inject_in_prompt`（默认 `true`）、`cache_ttl_seconds`（默认 60）、`max_tags_in_prompt`（默认 80）。
 
 ### 3.2 对话类型判定（可选，建议**不强行实现**）
 
@@ -318,11 +337,12 @@ class WritePreflightService:
 
 > 这一段与 MVP plan 中"暂缓的 MVP-2 确认闭环"自然衔接：本节落地后即等价于轻量版 MVP-2，**不需要**新增 `StructuredMemoryConfirmationMiddleware`，复用 `ClarificationMiddleware` 即可。
 
-### 3.7 计数刷新（在 write/update/delete 后调用）
+### 3.7 计数刷新（已落地）
 
-- `WriteService.normalize_and_write` 成功 → `TagManifestService.bump_counters(tags, tier, +1)`。
-- `MutationService.delete_memory` 成功 → `bump_counters(tags, tier, -1)`。
-- `MutationService.update_memory` 成功且 tags 变化 → 旧 tags `-1`，新 tags `+1`（需在 service 层先取原 tags）。
+- `WriteService.normalize_and_write` 成功 → `TagManifestService.bump_counters(tags, tier, +1)`（write-through 到 `memory_tag_manifest`）。
+- `MutationService.delete_memory` 成功 → `bump_counters(tags, tier, -1)`；任一 tier 全部降到 0 时 manifest 记录被删除。
+- `MutationService.update_memory` 成功且 tags 变化 → update 前先 `_fetch_tags` 拿老 tags，旧 tags `-1`、新 tags `+1`（同一 tier）。
+- bump 在 service 层用 try/except 包裹，manifest 维护失败**不会**阻塞主写入流程；真正的 drift 依赖 `rebuild_from_tiers()` 修复。
 
 ---
 
@@ -387,11 +407,11 @@ structured_memory:
 
 按"短链路、可独立验收"原则推进：
 
-1. **TagManifestService（只读 + 计数）+ Prompt 注入**：依赖最小，立刻提升 agent 检索质量。
+1. ✅ **TagManifestService（持久化 + 计数）+ Prompt 注入**：已落地；Chroma `memory_tag_manifest` 收敛计数，TTL 缓存 + write-through 持久化 + `rebuild_from_tiers` 漂移修复。
 2. **RetrievalPipeline + `structured_memory_recall` 工具**：从"agent 多次工具调用"收敛为"一次级联检索"。
 3. **WritePreflightService（一致 + 相似检测）**：先不做事实冲突判定，仅返回 `SKIP_DUPLICATE / PROCEED_UPDATE / PROCEED_WRITE`。
 4. **接入 `ask_clarification`**：在 preflight 中加冲突分支，复用既有澄清流。
-5. **TagDefinitionService**：等 1–4 跑稳后引入；早做容易过度抽象。
+5. **TagDefinitionService**：复用 manifest 已预留的 `definition` / `scope_keywords` 字段扩展，不再需要新 collection。
 6. **LLM-as-judge / 治理（MVP-4）**：观测一段时间后再决定。
 
 每一步完成后必须通过质量门禁：
@@ -416,22 +436,22 @@ cd backend && uvx ruff check .
 
 | 用户流程图节点 | 落地代码 / 模块 | 状态 |
 |---|---|---|
-| 加载并同步 Tag 清单 | `TagManifestService.snapshot` | 规划 |
-| 传递 Tag 名称、含义、各 Tier 计数 | `TagManifestService.snapshot_text` → prompt | 规划 |
+| 加载并同步 Tag 清单 | `TagManifestService.snapshot` + `repo.list_tag_manifest` | ✅ 已落地 |
+| 传递 Tag 名称、含义、各 Tier 计数 | `TagManifestService.snapshot_text` → prompt | ✅ 已落地（含义/定义字段预留） |
 | 判断对话类型 | Agent prompt 软判定（默认）；`ConversationIntentMiddleware`（可选） | 软判定即可 |
 | 优先检索 Core | `RetrievalPipeline.cascade_query` step 1 | 规划 |
 | Core 不足检索 Distilled | step 2 | 规划 |
 | Distilled 不足检索 Raw + 附件 | step 3 + `attachment_*` 字段 | 规划 |
 | 完成用户任务 | 既有 lead agent loop | 已有 |
 | 用户反馈新记忆 | Agent 在 prompt 引导下识别 | 已有（prompt） |
-| 匹配现有 Tag 定义 | `TagDefinitionService.match` | 规划 |
-| 扩展 Tag 定义域 | `TagDefinitionService.upsert(extend)` | 规划 |
-| 创建新 Tag | `TagDefinitionService.upsert(create)` | 规划 |
+| 匹配现有 Tag 定义 | `TagDefinitionService.match`（基于 manifest `definition`/`scope_keywords`） | 规划 |
+| 扩展 Tag 定义域 | `repo.upsert_tag_manifest(definition=..., scope_keywords=...)` | 规划（schema 已就绪） |
+| 创建新 Tag | 同上 | 规划 |
 | 检索现有相似记忆 | `WritePreflightService.prepare` 内部调 search | 规划 |
 | 事实冲突 → 等用户反馈 | preflight 返回 BLOCK + `ask_clarification` | 规划 |
 | 一致 → 反馈已有 | preflight 返回 SKIP_DUPLICATE | 规划 |
-| 写入 / 更新 | `WriteService` / `MutationService` | 已有 |
-| 更新 Tag 各 tier 计数 | `TagManifestService.bump_counters` | 规划 |
+| 写入 / 更新 | `WriteService` / `MutationService` | 已有（含 manifest bump） |
+| 更新 Tag 各 tier 计数 | `TagManifestService.bump_counters` write-through | ✅ 已落地 |
 
 ---
 

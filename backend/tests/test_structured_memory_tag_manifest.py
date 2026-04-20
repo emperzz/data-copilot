@@ -118,18 +118,24 @@ def test_snapshot_sorted_by_total_desc_then_name(repo: StructuredMemoryRepositor
 # ---------------------------------------------------------------------------
 
 
-def test_bump_counters_is_noop_before_cache_load(repo: StructuredMemoryRepository) -> None:
+def test_bump_counters_persists_before_cache_load(repo: StructuredMemoryRepository) -> None:
+    """With persistence, bumps must write through to Chroma even if cache is cold."""
     service = TagManifestService(repository=repo)
     service.bump_counters(tags=["new-tag"], tier=MemoryTier.RAW, delta=1)
-    # No snapshot yet → cache unloaded → bump must not inject phantom entries.
+
+    persisted = repo.get_tag_manifest("new-tag")
+    assert persisted is not None
+    assert persisted.counts_by_tier == {"raw": 1}
+
     entries = service.snapshot()
-    assert [e.tag for e in entries] == []
+    assert [e.tag for e in entries] == ["new-tag"]
+    assert entries[0].counts_by_tier == {"raw": 1}
 
 
 def test_bump_counters_updates_loaded_cache(repo: StructuredMemoryRepository) -> None:
     repo.create_raw_memory(title="r", content="c", source_thread_id="t", tags=["alpha"])
     service = TagManifestService(repository=repo)
-    service.snapshot()  # prime cache
+    service.snapshot()  # prime cache (bootstraps manifest from tier scan)
 
     service.bump_counters(tags=["alpha", "beta"], tier=MemoryTier.RAW, delta=2)
 
@@ -146,6 +152,7 @@ def test_bump_counters_removes_tag_when_count_hits_zero(repo: StructuredMemoryRe
     service.bump_counters(tags=["alpha"], tier=MemoryTier.RAW, delta=-1)
 
     assert service.snapshot() == []
+    assert repo.get_tag_manifest("alpha") is None
 
 
 def test_bump_counters_ignores_invalid_tier(repo: StructuredMemoryRepository) -> None:
@@ -159,20 +166,28 @@ def test_bump_counters_ignores_invalid_tier(repo: StructuredMemoryRepository) ->
     assert entries["alpha"].counts_by_tier == {"raw": 1}
 
 
-def test_invalidate_forces_rescan(repo: StructuredMemoryRepository) -> None:
+def test_invalidate_reloads_from_persistence(repo: StructuredMemoryRepository) -> None:
+    """After invalidate, snapshot must reload from the persisted manifest."""
     service = TagManifestService(repository=repo)
-    service.snapshot()  # primes with empty cache
+    service.snapshot()  # primes empty manifest in cache
 
-    repo.create_raw_memory(title="r", content="c", source_thread_id="t", tags=["alpha"])
-    # Cache is still fresh (TTL > 0) so snapshot returns stale empty result.
-    assert service.snapshot() == []
+    service.bump_counters(tags=["alpha"], tier=MemoryTier.RAW, delta=1)
 
-    service.invalidate()
-    entries = service.snapshot()
+    # Build a second service on the same repo; it must see the persisted bump.
+    other = TagManifestService(repository=repo)
+    entries = other.snapshot()
     assert [e.tag for e in entries] == ["alpha"]
+    assert entries[0].counts_by_tier == {"raw": 1}
+
+    # Invalidate the original and confirm it also reloads persisted state.
+    service.invalidate()
+    entries_again = service.snapshot()
+    assert entries_again == entries
 
 
-def test_cache_ttl_zero_disables_cache(repo: StructuredMemoryRepository) -> None:
+def test_cache_ttl_zero_always_reloads_from_persistence(
+    repo: StructuredMemoryRepository,
+) -> None:
     set_structured_memory_config(
         StructuredMemoryConfig(
             enabled=True,
@@ -183,9 +198,95 @@ def test_cache_ttl_zero_disables_cache(repo: StructuredMemoryRepository) -> None
     service = TagManifestService(repository=repo)
     service.snapshot()
 
-    repo.create_raw_memory(title="r", content="c", source_thread_id="t", tags=["alpha"])
-    entries = service.snapshot()  # should rescan since ttl=0
+    service.bump_counters(tags=["alpha"], tier=MemoryTier.RAW, delta=1)
+    entries = service.snapshot()  # must reload from persistence since ttl=0
     assert [e.tag for e in entries] == ["alpha"]
+
+
+# ---------------------------------------------------------------------------
+# Persistence + bootstrap + rebuild_from_tiers
+# ---------------------------------------------------------------------------
+
+
+def test_first_snapshot_bootstraps_persistence_from_tiers(
+    repo: StructuredMemoryRepository,
+) -> None:
+    """On first run with existing tier data, manifest seeds itself from scan."""
+    repo.create_raw_memory(title="r", content="c", source_thread_id="t", tags=["alpha", "beta"])
+    repo.create_raw_memory(title="r2", content="c", source_thread_id="t", tags=["alpha"])
+
+    assert repo.list_tag_manifest() == []  # no persisted manifest yet
+
+    service = TagManifestService(repository=repo)
+    service.snapshot()
+
+    persisted = {rec.tag: rec for rec in repo.list_tag_manifest()}
+    assert persisted["alpha"].counts_by_tier == {"raw": 2}
+    assert persisted["beta"].counts_by_tier == {"raw": 1}
+
+
+def test_bump_persists_across_service_instances(
+    repo: StructuredMemoryRepository,
+) -> None:
+    first = TagManifestService(repository=repo)
+    first.bump_counters(tags=["alpha"], tier=MemoryTier.CORE, delta=3)
+
+    second = TagManifestService(repository=repo)
+    entries = {e.tag: e for e in second.snapshot()}
+    assert entries["alpha"].counts_by_tier == {"core": 3}
+
+
+def test_rebuild_from_tiers_repairs_drift(repo: StructuredMemoryRepository) -> None:
+    service = TagManifestService(repository=repo)
+
+    # Poison the persisted manifest with wrong counts and a stale tag.
+    repo.upsert_tag_manifest(tag="alpha", counts_by_tier={"raw": 99})
+    repo.upsert_tag_manifest(tag="ghost", counts_by_tier={"core": 1})
+
+    repo.create_raw_memory(title="r", content="c", source_thread_id="t", tags=["alpha"])
+
+    service.rebuild_from_tiers()
+
+    persisted = {rec.tag: rec for rec in repo.list_tag_manifest()}
+    assert "ghost" not in persisted  # tag no longer present anywhere
+    assert persisted["alpha"].counts_by_tier == {"raw": 1}
+    assert [e.tag for e in service.snapshot()] == ["alpha"]
+
+
+# ---------------------------------------------------------------------------
+# Repository-level CRUD
+# ---------------------------------------------------------------------------
+
+
+def test_repo_upsert_tag_manifest_preserves_created_at(
+    repo: StructuredMemoryRepository,
+) -> None:
+    first = repo.upsert_tag_manifest(tag="alpha", counts_by_tier={"raw": 1})
+    second = repo.upsert_tag_manifest(tag="alpha", counts_by_tier={"raw": 2})
+
+    assert first.created_at == second.created_at
+    assert second.total == 2
+
+
+def test_repo_upsert_strips_zero_and_negative_counts(
+    repo: StructuredMemoryRepository,
+) -> None:
+    rec = repo.upsert_tag_manifest(
+        tag="alpha",
+        counts_by_tier={"raw": 3, "distilled": 0, "core": -5},
+    )
+    assert rec.counts_by_tier == {"raw": 3}
+
+
+def test_repo_get_missing_tag_returns_none(repo: StructuredMemoryRepository) -> None:
+    assert repo.get_tag_manifest("missing") is None
+
+
+def test_repo_delete_tag_manifest(repo: StructuredMemoryRepository) -> None:
+    repo.upsert_tag_manifest(tag="alpha", counts_by_tier={"raw": 1})
+    assert repo.delete_tag_manifest("alpha") is True
+    assert repo.get_tag_manifest("alpha") is None
+    assert repo.delete_tag_manifest("alpha") is False  # second delete is a no-op
 
 
 # ---------------------------------------------------------------------------

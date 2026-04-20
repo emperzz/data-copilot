@@ -9,6 +9,7 @@ from deerflow.memory.models import (
     DistilledMemoryRecord,
     MemoryTier,
     RawMemoryRecord,
+    TagManifestRecord,
 )
 from deerflow.memory.repository import (
     StructuredMemoryRepository,
@@ -43,6 +44,7 @@ __all__ = [
     "RawMemoryRecord",
     "DistilledMemoryRecord",
     "CoreMemoryRecord",
+    "TagManifestRecord",
     "StructuredMemoryRepository",
     "StructuredMemoryDisabledError",
     "get_structured_memory_repository",
