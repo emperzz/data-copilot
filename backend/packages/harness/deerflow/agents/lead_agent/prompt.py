@@ -638,12 +638,13 @@ def _build_structured_memory_section() -> str:
     try:
         from deerflow.config.structured_memory_config import get_structured_memory_config
 
-        if not get_structured_memory_config().enabled:
+        sm_config = get_structured_memory_config()
+        if not sm_config.enabled:
             return ""
     except Exception:
         return ""
 
-    return """<structured_memory_system>
+    guidance = """<structured_memory_system>
 You have **structured memory** tools for persisting and retrieving cross-session business knowledge (schemas, rules, troubleshooting patterns, constraint logic, etc.).
 
 **Available tools:**
@@ -743,6 +744,29 @@ You may skip tiers only when clearly justified (e.g. one crisp policy belongs in
 2. `structured_memory_delete(memory_id="distilled_444…")`
 3. `structured_memory_delete(memory_id="raw_222…")`
 </structured_memory_system>"""
+
+    manifest_block = _build_structured_memory_tag_manifest_section(sm_config)
+    if manifest_block:
+        guidance = f"{guidance}\n\n{manifest_block}"
+    return guidance
+
+
+def _build_structured_memory_tag_manifest_section(sm_config: object) -> str:
+    """Render the tag manifest snapshot when enabled; empty string otherwise.
+
+    Kept isolated so failures in the manifest path never block the main
+    structured memory guidance from being injected into the system prompt.
+    """
+    tag_manifest_cfg = getattr(sm_config, "tag_manifest", None)
+    if tag_manifest_cfg is None or not getattr(tag_manifest_cfg, "inject_in_prompt", True):
+        return ""
+    try:
+        from deerflow.memory.tag_manifest_service import get_tag_manifest_service
+
+        return get_tag_manifest_service().snapshot_text()
+    except Exception:
+        logger.exception("Failed to build structured memory tag manifest section")
+        return ""
 
 
 def _build_acp_section() -> str:

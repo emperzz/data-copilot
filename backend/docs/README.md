@@ -21,6 +21,8 @@ This directory contains detailed documentation for the DeerFlow backend.
 | [summarization.md](summarization.md) | Context summarization feature |
 | [plan_mode_usage.md](plan_mode_usage.md) | Plan mode with TodoList |
 | [AUTO_TITLE_GENERATION.md](AUTO_TITLE_GENERATION.md) | Automatic title generation |
+| [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md) | Structured memory (Chroma tiers) usage and tools |
+| [STRUCTURED_MEMORY_DEVELOPMENT.md](STRUCTURED_MEMORY_DEVELOPMENT.md) | Structured memory development guide and roadmap |
 
 ## Development
 

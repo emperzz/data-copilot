@@ -9,6 +9,7 @@ from deerflow.config.structured_memory_config import get_structured_memory_confi
 from deerflow.memory.models import MemoryTier
 from deerflow.memory.repository import StructuredMemoryRepository, get_structured_memory_repository
 from deerflow.memory.structured_memory_write_service import _normalize_content, _normalize_tags, _normalize_title
+from deerflow.memory.tag_manifest_service import get_tag_manifest_service
 
 MutationActionLiteral = Literal["update", "delete"]
 
@@ -73,7 +74,10 @@ class StructuredMemoryMutationService:
         normalized_content = _normalize_content(content, max_len=sm.write.max_content_length)
         normalized_tags = _normalize_tags(tags)
 
-        updated = self._repo().update_memory(
+        repo = self._repo()
+        previous_tags = _fetch_tags(repo, memory_id=normalized_id, tier=tier)
+
+        updated = repo.update_memory(
             memory_id=normalized_id,
             title=normalized_title,
             content=normalized_content,
@@ -83,6 +87,7 @@ class StructuredMemoryMutationService:
         )
         if not updated:
             raise StructuredMemoryMutationError(f"No structured memory record found with id={normalized_id!r}.")
+        _apply_tag_delta(previous_tags=previous_tags, next_tags=normalized_tags, tier=tier)
         return StructuredMemoryMutationResult(
             action="update",
             memory_id=normalized_id,
@@ -103,9 +108,11 @@ class StructuredMemoryMutationService:
 
         repo = self._repo()
         self._ensure_no_downstream_references(repo, memory_id=normalized_id, tier=tier)
+        previous_tags = _fetch_tags(repo, memory_id=normalized_id, tier=tier)
         deleted = repo.delete_memory(normalized_id)
         if not deleted:
             raise StructuredMemoryMutationError(f"No structured memory record found with id={normalized_id!r}.")
+        _apply_tag_delta(previous_tags=previous_tags, next_tags=[], tier=tier)
         return StructuredMemoryMutationResult(
             action="delete",
             memory_id=normalized_id,
@@ -154,6 +161,38 @@ def _parse_ids(raw: object) -> list[str]:
     from deerflow.memory.repository import _json_to_string_list
 
     return _json_to_string_list(raw)
+
+
+def _fetch_tags(repo: StructuredMemoryRepository, *, memory_id: str, tier: MemoryTier) -> list[str]:
+    """Look up current tags so manifest deltas can account for tag changes."""
+    if tier == MemoryTier.RAW:
+        record = repo.get_raw_memory(memory_id)
+    elif tier == MemoryTier.DISTILLED:
+        record = repo.get_distilled_memory(memory_id)
+    else:
+        record = repo.get_core_memory(memory_id)
+    return list(record.tags) if record is not None else []
+
+
+def _apply_tag_delta(*, previous_tags: list[str], next_tags: list[str], tier: MemoryTier) -> None:
+    """Push tag count deltas into the manifest cache (best-effort).
+
+    Tags present in both lists net to zero; removed tags get -1, added tags +1.
+    """
+    previous = set(previous_tags)
+    nxt = set(next_tags)
+    removed = [t for t in previous_tags if t in (previous - nxt)]
+    added = [t for t in next_tags if t in (nxt - previous)]
+    if not removed and not added:
+        return
+    try:
+        manifest = get_tag_manifest_service()
+        if removed:
+            manifest.bump_counters(tags=removed, tier=tier, delta=-1)
+        if added:
+            manifest.bump_counters(tags=added, tier=tier, delta=+1)
+    except Exception:  # pragma: no cover - cache maintenance must not block mutations
+        pass
 
 
 def format_mutation_success(result: StructuredMemoryMutationResult) -> str:

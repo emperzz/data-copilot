@@ -28,6 +28,12 @@ from deerflow.memory.structured_memory_write_service import (
     StructuredMemoryWriteService,
     format_write_success,
 )
+from deerflow.memory.tag_manifest_service import (
+    TagManifestEntry,
+    TagManifestService,
+    get_tag_manifest_service,
+    reset_tag_manifest_service_singleton,
+)
 
 __all__ = [
     "DEFAULT_MEMORY_AGENT",
@@ -50,4 +56,8 @@ __all__ = [
     "SearchResultItem",
     "TagSummary",
     "MemoryWithLineage",
+    "TagManifestEntry",
+    "TagManifestService",
+    "get_tag_manifest_service",
+    "reset_tag_manifest_service_singleton",
 ]

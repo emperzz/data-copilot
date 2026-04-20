@@ -47,6 +47,33 @@ class StructuredMemoryQueryConfig(BaseModel):
     )
 
 
+class StructuredMemoryTagManifestConfig(BaseModel):
+    """Tag manifest snapshot + prompt injection controls.
+
+    The manifest summarises which tags exist and how many records per tier use
+    each tag. It is produced by scanning the repository once and incrementally
+    updated on successful writes/updates/deletes; a TTL triggers a periodic
+    rescan to repair drift.
+    """
+
+    inject_in_prompt: bool = Field(
+        default=True,
+        description="When true, append a rendered tag manifest to <structured_memory_system>.",
+    )
+    cache_ttl_seconds: int = Field(
+        default=60,
+        ge=0,
+        le=86_400,
+        description="Process-level cache TTL; 0 disables caching and forces a rescan per snapshot.",
+    )
+    max_tags_in_prompt: int = Field(
+        default=80,
+        ge=1,
+        le=1000,
+        description="Upper bound on tags rendered into the system prompt (top by total count).",
+    )
+
+
 class StructuredMemoryConfig(BaseModel):
     """Structured memory subsystem: independent of ``memory.enabled`` (session memory)."""
 
@@ -65,6 +92,10 @@ class StructuredMemoryConfig(BaseModel):
     query: StructuredMemoryQueryConfig = Field(
         default_factory=StructuredMemoryQueryConfig,
         description="Query tool defaults and limits.",
+    )
+    tag_manifest: StructuredMemoryTagManifestConfig = Field(
+        default_factory=StructuredMemoryTagManifestConfig,
+        description="Tag manifest cache and prompt injection controls.",
     )
 
 

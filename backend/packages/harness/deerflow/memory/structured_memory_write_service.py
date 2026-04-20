@@ -8,6 +8,7 @@ from typing import Literal
 from deerflow.config.structured_memory_config import get_structured_memory_config
 from deerflow.memory.models import TITLE_MAX_LENGTH, MemoryTier
 from deerflow.memory.repository import StructuredMemoryRepository, get_structured_memory_repository
+from deerflow.memory.tag_manifest_service import get_tag_manifest_service
 
 
 class StructuredMemoryWriteError(ValueError):
@@ -119,6 +120,7 @@ class StructuredMemoryWriteService:
                 attachment_image_paths=_normalize_path_list(attachment_image_paths),
                 inline_web_urls=_normalize_path_list(inline_web_urls),
             )
+            _bump_manifest(record.tags, MemoryTier.RAW, +1)
             return StructuredMemoryWriteResult(memory_id=record.id, tier="raw", title=record.title)
 
         if tier == MemoryTier.DISTILLED.value:
@@ -132,6 +134,7 @@ class StructuredMemoryWriteService:
                 source_agent=source_agent,
                 user=user,
             )
+            _bump_manifest(record.tags, MemoryTier.DISTILLED, +1)
             return StructuredMemoryWriteResult(memory_id=record.id, tier="distilled", title=record.title)
 
         if tier == MemoryTier.CORE.value:
@@ -145,6 +148,7 @@ class StructuredMemoryWriteService:
                 source_agent=source_agent,
                 user=user,
             )
+            _bump_manifest(record.tags, MemoryTier.CORE, +1)
             return StructuredMemoryWriteResult(memory_id=record.id, tier="core", title=record.title)
 
         raise StructuredMemoryWriteError(f"Unknown tier {tier!r}; use raw, distilled, or core.")
@@ -187,6 +191,16 @@ def _ensure_distilled_ids_exist(repo: StructuredMemoryRepository, ids: list[str]
         raise StructuredMemoryWriteError(
             f"distilled_memory_ids reference unknown distilled record(s): {', '.join(missing)}",
         )
+
+
+def _bump_manifest(tags: list[str], tier: MemoryTier, delta: int) -> None:
+    """Best-effort tag manifest cache update; never raises to callers."""
+    if not tags or delta == 0:
+        return
+    try:
+        get_tag_manifest_service().bump_counters(tags=tags, tier=tier, delta=delta)
+    except Exception:  # pragma: no cover - cache maintenance must not block writes
+        pass
 
 
 def format_write_success(result: StructuredMemoryWriteResult) -> str:

@@ -12,7 +12,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 9
+config_version: 10
 
 # ============================================================================
 # Logging
@@ -734,6 +734,12 @@ structured_memory:
     default_tiers:
       - core
       - distilled
+  # Tag manifest: snapshot of (tag -> per-tier counts) used to seed the
+  # system prompt so the agent knows which tags exist before retrieval.
+  tag_manifest:
+    inject_in_prompt: true
+    cache_ttl_seconds: 60
+    max_tags_in_prompt: 80
 
 # ============================================================================
 # Custom Agent Management API
