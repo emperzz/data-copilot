@@ -37,6 +37,15 @@ class StructuredMemoryMutationService:
             return self._repository
         return get_structured_memory_repository()
 
+    def _require_repository(self) -> StructuredMemoryRepository:
+        """Return the repository, raising if structured memory is disabled."""
+        sm = get_structured_memory_config()
+        if self._repository is None and not sm.enabled:
+            raise StructuredMemoryMutationError(
+                "Structured memory is disabled; set structured_memory.enabled to true in config.yaml.",
+            )
+        return self._repo()
+
     @staticmethod
     def _resolve_tier(memory_id: str) -> MemoryTier:
         normalized_id = memory_id.strip()
@@ -60,21 +69,16 @@ class StructuredMemoryMutationService:
         source_agent: str | None = None,
         user: str | None = None,
     ) -> StructuredMemoryMutationResult:
-        sm = get_structured_memory_config()
-        if self._repository is None and not sm.enabled:
-            raise StructuredMemoryMutationError(
-                "Structured memory is disabled; set structured_memory.enabled to true in config.yaml.",
-            )
         normalized_id = memory_id.strip()
         if not normalized_id:
             raise StructuredMemoryMutationError("memory_id must be non-empty.")
         tier = self._resolve_tier(normalized_id)
 
+        repo = self._require_repository()
+        sm = get_structured_memory_config()
         normalized_title = _normalize_title(title)
         normalized_content = _normalize_content(content, max_len=sm.write.max_content_length)
         normalized_tags = _normalize_tags(tags)
-
-        repo = self._repo()
         previous_tags = _fetch_tags(repo, memory_id=normalized_id, tier=tier)
 
         updated = repo.update_memory(
@@ -96,17 +100,12 @@ class StructuredMemoryMutationService:
         )
 
     def delete_memory(self, *, memory_id: str) -> StructuredMemoryMutationResult:
-        sm = get_structured_memory_config()
-        if self._repository is None and not sm.enabled:
-            raise StructuredMemoryMutationError(
-                "Structured memory is disabled; set structured_memory.enabled to true in config.yaml.",
-            )
         normalized_id = memory_id.strip()
         if not normalized_id:
             raise StructuredMemoryMutationError("memory_id must be non-empty.")
         tier = self._resolve_tier(normalized_id)
 
-        repo = self._repo()
+        repo = self._require_repository()
         self._ensure_no_downstream_references(repo, memory_id=normalized_id, tier=tier)
         previous_tags = _fetch_tags(repo, memory_id=normalized_id, tier=tier)
         deleted = repo.delete_memory(normalized_id)
@@ -122,15 +121,10 @@ class StructuredMemoryMutationService:
     @staticmethod
     def _ensure_no_downstream_references(repo: StructuredMemoryRepository, *, memory_id: str, tier: MemoryTier) -> None:
         if tier == MemoryTier.RAW:
-            distilled_result = repo._distilled_collection.get(include=["metadatas"])
             blockers: list[str] = []
-            for idx, metadata in enumerate(distilled_result.get("metadatas") or []):
-                if not metadata:
-                    continue
-                raw_ids = set(_parse_ids(metadata.get("raw_memory_ids_json")))
+            for dist_id, raw_ids in repo.iter_lineage_refs(MemoryTier.DISTILLED):
                 if memory_id in raw_ids:
-                    dist_ids = distilled_result.get("ids") or []
-                    blockers.append(dist_ids[idx] if idx < len(dist_ids) else "distilled_unknown")
+                    blockers.append(dist_id)
             if blockers:
                 raise StructuredMemoryMutationError(
                     "Cannot delete raw memory that is referenced by distilled memory: "
@@ -140,27 +134,16 @@ class StructuredMemoryMutationService:
             return
 
         if tier == MemoryTier.DISTILLED:
-            core_result = repo._core_collection.get(include=["metadatas"])
-            blockers = []
-            for idx, metadata in enumerate(core_result.get("metadatas") or []):
-                if not metadata:
-                    continue
-                distilled_ids = set(_parse_ids(metadata.get("distilled_memory_ids_json")))
+            blockers: list[str] = []
+            for core_id, distilled_ids in repo.iter_lineage_refs(MemoryTier.CORE):
                 if memory_id in distilled_ids:
-                    core_ids = core_result.get("ids") or []
-                    blockers.append(core_ids[idx] if idx < len(core_ids) else "core_unknown")
+                    blockers.append(core_id)
             if blockers:
                 raise StructuredMemoryMutationError(
                     "Cannot delete distilled memory that is referenced by core memory: "
                     + ", ".join(blockers)
                     + ". Delete or update downstream records first.",
                 )
-
-
-def _parse_ids(raw: object) -> list[str]:
-    from deerflow.memory.repository import _json_to_string_list
-
-    return _json_to_string_list(raw)
 
 
 def _fetch_tags(repo: StructuredMemoryRepository, *, memory_id: str, tier: MemoryTier) -> list[str]:

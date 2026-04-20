@@ -279,18 +279,14 @@ class TagManifestService:
 
 def _scan_tag_counts_by_tier(repo: StructuredMemoryRepository) -> dict[str, dict[str, int]]:
     """Single-pass scan producing ``{tag: {tier: count}}`` across all tiers."""
-    from deerflow.memory.structured_memory_search_service import TIER_TO_COLLECTION_ATTR, _json_to_string_list
+    from deerflow.memory._shared import _json_to_string_list
 
     counts: dict[str, dict[str, int]] = {}
     for tier in MemoryTier:
-        collection = getattr(repo, TIER_TO_COLLECTION_ATTR[tier])
-        if collection.count() == 0:
+        if repo.count(tier) == 0:
             continue
-        result = collection.get(include=["metadatas"])
         tier_key = tier.value
-        for meta in result.get("metadatas") or []:
-            if not meta:
-                continue
+        for meta in repo.iter_tag_metadata(tier):
             for tag in _json_to_string_list(meta.get("tags_json")):
                 per_tier = counts.setdefault(tag, {})
                 per_tier[tier_key] = per_tier.get(tier_key, 0) + 1

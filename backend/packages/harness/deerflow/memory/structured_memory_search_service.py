@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from deerflow.config.structured_memory_config import get_structured_memory_config
+from deerflow.memory._shared import (
+    _json_to_string_list,
+    _record_to_dict,
+)
+from deerflow.memory._shared import (
+    resolve_tiers as _resolve_tiers,
+)
 from deerflow.memory.models import (
     CoreMemoryRecord,
     DistilledMemoryRecord,
@@ -18,13 +24,6 @@ from deerflow.memory.repository import StructuredMemoryRepository, get_structure
 
 class StructuredMemorySearchError(ValueError):
     """Validation or runtime failure for a structured memory query."""
-
-
-TIER_TO_COLLECTION_ATTR = {
-    MemoryTier.RAW: "_raw_collection",
-    MemoryTier.DISTILLED: "_distilled_collection",
-    MemoryTier.CORE: "_core_collection",
-}
 
 
 @dataclass(frozen=True)
@@ -57,22 +56,6 @@ class MemoryWithLineage:
     record: dict[str, Any]
     tier: str
     upstream: list[dict[str, Any]] = field(default_factory=list)
-
-
-def _json_to_string_list(raw: Any) -> list[str]:
-    if not raw or not isinstance(raw, str):
-        return []
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [str(item) for item in parsed if isinstance(item, str)]
-
-
-def _record_to_dict(record: MemoryRecordCommon) -> dict[str, Any]:
-    return record.model_dump()
 
 
 def _build_where_filter(
@@ -145,7 +128,7 @@ class StructuredMemorySearchService:
         results: list[SearchResultItem] = []
 
         for tier in tiers:
-            collection = getattr(repo, TIER_TO_COLLECTION_ATTR[tier])
+            collection = repo._collection_for_tier(tier)
             query_kwargs: dict[str, Any] = {
                 "query_texts": [query_text],
                 "n_results": fetch_k,
@@ -197,14 +180,10 @@ class StructuredMemorySearchService:
         tag_data: dict[str, dict[str, int]] = {}
 
         for tier in tiers:
-            collection = getattr(repo, TIER_TO_COLLECTION_ATTR[tier])
-            total = collection.count()
+            total = repo.count(tier)
             if total == 0:
                 continue
-            result = collection.get(include=["metadatas"])
-            for meta in result.get("metadatas") or []:
-                if not meta:
-                    continue
+            for meta in repo.iter_tag_metadata(tier):
                 for tag in _json_to_string_list(meta.get("tags_json")):
                     if tag not in tag_data:
                         tag_data[tag] = {}
@@ -363,23 +342,6 @@ class StructuredMemorySearchService:
                 upstream.append(entry)
 
         return upstream
-
-
-def _resolve_tiers(
-    tier_filter: list[str] | None,
-    defaults: list[str | MemoryTier],
-) -> list[MemoryTier]:
-    raw_values = tier_filter if tier_filter else defaults
-    result: list[MemoryTier] = []
-    for v in raw_values:
-        val = v.value if isinstance(v, MemoryTier) else str(v).strip().lower()
-        try:
-            result.append(MemoryTier(val))
-        except ValueError:
-            pass
-    if not result:
-        result = [MemoryTier.CORE, MemoryTier.DISTILLED]
-    return result
 
 
 def _truncate(text: str, max_len: int) -> str:

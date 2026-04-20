@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +17,19 @@ from deerflow.config.structured_memory_config import (
     StructuredMemoryDisabledError,
     get_structured_memory_config,
 )
+from deerflow.memory._shared import (
+    TIER_TO_COLLECTION_ATTR,
+    _json_to_string_list,
+    _string_list_to_json,
+    utc_now_iso_z,
+)
 from deerflow.memory.models import (
     DEFAULT_MEMORY_AGENT,
     DEFAULT_MEMORY_USER,
     TITLE_MAX_LENGTH,
     CoreMemoryRecord,
     DistilledMemoryRecord,
+    MemoryTier,
     RawMemoryRecord,
     TagManifestRecord,
 )
@@ -31,29 +38,6 @@ RAW_COLLECTION_NAME = "memory_raw"
 DISTILLED_COLLECTION_NAME = "memory_distilled"
 CORE_COLLECTION_NAME = "memory_core"
 TAG_MANIFEST_COLLECTION_NAME = "memory_tag_manifest"
-
-
-def utc_now_iso_z() -> str:
-    """Return current UTC timestamp in ISO8601 with Z suffix."""
-    return datetime.now(UTC).isoformat().removesuffix("+00:00") + "Z"
-
-
-def _string_list_to_json(values: list[str]) -> str:
-    return json.dumps(values, ensure_ascii=False)
-
-
-def _json_to_string_list(raw: Any) -> list[str]:
-    if not raw:
-        return []
-    if not isinstance(raw, str):
-        return []
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [str(item) for item in parsed if isinstance(item, str)]
 
 
 def _fallback_title(document: str, *, max_len: int = TITLE_MAX_LENGTH) -> str:
@@ -556,6 +540,58 @@ class StructuredMemoryRepository:
             return False
         self._tag_manifest_collection.delete(ids=[normalized])
         return True
+
+    # ------------------------------------------------------------------
+    # tier-scoped public API (replaces getattr access)
+    # ------------------------------------------------------------------
+
+    def iter_tag_metadata(self, tier: MemoryTier) -> Iterator[dict[str, Any]]:
+        """Yield metadata dicts for all records in ``tier``."""
+        collection = self._collection_for_tier(tier)
+        if collection.count() == 0:
+            return
+        result = collection.get(include=["metadatas"])
+        for meta in result.get("metadatas") or []:
+            if meta:
+                yield meta
+
+    def iter_lineage_refs(
+        self, tier: MemoryTier
+    ) -> Iterator[tuple[str, list[str]]]:
+        """Yield (id, upstream_ids) for records in ``tier`` that have lineage.
+
+        - DISTILLED → yields (distilled_id, raw_memory_ids)
+        - CORE → yields (core_id, distilled_memory_ids)
+        - RAW → yields nothing (raw has no upstream)
+        """
+        if tier == MemoryTier.RAW:
+            return
+        collection = self._collection_for_tier(tier)
+        if collection.count() == 0:
+            return
+        result = collection.get(ids=None, include=["metadatas"])
+        ids_list = result.get("ids") or []
+        metas_list = result.get("metadatas") or []
+        for idx, mid in enumerate(ids_list):
+            meta = metas_list[idx] if idx < len(metas_list) else {}
+            if not meta:
+                continue
+            if tier == MemoryTier.DISTILLED:
+                upstream = _json_to_string_list(meta.get("raw_memory_ids_json"))
+            elif tier == MemoryTier.CORE:
+                upstream = _json_to_string_list(meta.get("distilled_memory_ids_json"))
+            else:
+                continue
+            if upstream:
+                yield (mid, upstream)
+
+    def count(self, tier: MemoryTier) -> int:
+        """Return the number of records in ``tier``."""
+        return self._collection_for_tier(tier).count()
+
+    def _collection_for_tier(self, tier: MemoryTier):
+        """Return the Chroma collection for ``tier``."""
+        return getattr(self, TIER_TO_COLLECTION_ATTR[tier])
 
 
 _repository_instance: StructuredMemoryRepository | None = None
