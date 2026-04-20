@@ -121,10 +121,7 @@ class StructuredMemoryMutationService:
     @staticmethod
     def _ensure_no_downstream_references(repo: StructuredMemoryRepository, *, memory_id: str, tier: MemoryTier) -> None:
         if tier == MemoryTier.RAW:
-            blockers: list[str] = []
-            for dist_id, raw_ids in repo.iter_lineage_refs(MemoryTier.DISTILLED):
-                if memory_id in raw_ids:
-                    blockers.append(dist_id)
+            blockers = repo.find_distilled_referencing_raw(memory_id)
             if blockers:
                 raise StructuredMemoryMutationError(
                     "Cannot delete raw memory that is referenced by distilled memory: "
@@ -134,10 +131,7 @@ class StructuredMemoryMutationService:
             return
 
         if tier == MemoryTier.DISTILLED:
-            blockers: list[str] = []
-            for core_id, distilled_ids in repo.iter_lineage_refs(MemoryTier.CORE):
-                if memory_id in distilled_ids:
-                    blockers.append(core_id)
+            blockers = repo.find_core_referencing_distilled(memory_id)
             if blockers:
                 raise StructuredMemoryMutationError(
                     "Cannot delete distilled memory that is referenced by core memory: "

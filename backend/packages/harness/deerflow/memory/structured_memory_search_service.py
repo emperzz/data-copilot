@@ -17,9 +17,9 @@ from deerflow.memory.models import (
     CoreMemoryRecord,
     DistilledMemoryRecord,
     MemoryRecordCommon,
-    MemoryTier,
 )
 from deerflow.memory.repository import StructuredMemoryRepository, get_structured_memory_repository
+from deerflow.memory.tag_manifest_service import TagManifestEntry, get_tag_manifest_service
 
 
 class StructuredMemorySearchError(ValueError):
@@ -38,15 +38,6 @@ class SearchResultItem:
     distance: float | None = None
     updated_at: str = ""
     source_agent: str = ""
-
-
-@dataclass(frozen=True)
-class TagSummary:
-    """Aggregate info for a single tag across tiers."""
-
-    tag: str
-    count: int
-    tiers: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -173,32 +164,9 @@ class StructuredMemorySearchService:
     # list_tags – distinct tag discovery across tiers
     # ------------------------------------------------------------------
 
-    def list_tags(self, *, tier_filter: list[str] | None = None) -> list[TagSummary]:
-        tiers = _resolve_tiers(tier_filter, list(MemoryTier))
-        repo = self._repo()
-
-        tag_data: dict[str, dict[str, int]] = {}
-
-        for tier in tiers:
-            total = repo.count(tier)
-            if total == 0:
-                continue
-            for meta in repo.iter_tag_metadata(tier):
-                for tag in _json_to_string_list(meta.get("tags_json")):
-                    if tag not in tag_data:
-                        tag_data[tag] = {}
-                    tag_data[tag][tier.value] = tag_data[tag].get(tier.value, 0) + 1
-
-        summaries: list[TagSummary] = []
-        for tag, tier_counts in sorted(tag_data.items()):
-            summaries.append(
-                TagSummary(
-                    tag=tag,
-                    count=sum(tier_counts.values()),
-                    tiers=sorted(tier_counts.keys()),
-                )
-            )
-        return summaries
+    def list_tags(self, *, tier_filter: list[str] | None = None) -> list[TagManifestEntry]:
+        manifest = get_tag_manifest_service()
+        return manifest.snapshot(tier_filter=tier_filter)
 
     # ------------------------------------------------------------------
     # get_by_id – exact lookup with optional upstream lineage
@@ -247,13 +215,13 @@ class StructuredMemorySearchService:
         return "\n".join(lines)
 
     @staticmethod
-    def format_tag_list(summaries: list[TagSummary]) -> str:
-        if not summaries:
+    def format_tag_list(entries: list[TagManifestEntry]) -> str:
+        if not entries:
             return "No tags found in structured memory."
-        lines: list[str] = [f"Available tags ({len(summaries)} total):\n"]
-        for s in summaries:
-            tiers_str = "/".join(s.tiers)
-            lines.append(f"- {s.tag} ({s.count} records, tiers: {tiers_str})")
+        lines: list[str] = [f"Available tags ({len(entries)} total):\n"]
+        for e in entries:
+            parts = " ".join(f"{tier}:{count}" for tier, count in sorted(e.counts_by_tier.items()))
+            lines.append(f"- {e.tag} ({e.total} records, tiers: [{parts}])")
         return "\n".join(lines)
 
     @staticmethod

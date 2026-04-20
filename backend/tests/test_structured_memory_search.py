@@ -159,8 +159,8 @@ def test_list_tags_respects_tier_filter(seeded_repo: StructuredMemoryRepository)
     svc = StructuredMemorySearchService(repository=seeded_repo)
     summaries = svc.list_tags(tier_filter=["core"])
     for s in summaries:
-        assert "core" in s.tiers
-        assert "raw" not in s.tiers
+        assert "core" in s.counts_by_tier
+        assert "raw" not in s.counts_by_tier
 
 
 def test_list_tags_empty_repo(repo: StructuredMemoryRepository) -> None:

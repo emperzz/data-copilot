@@ -21,7 +21,6 @@ from deerflow.memory.structured_memory_search_service import (
     SearchResultItem,
     StructuredMemorySearchError,
     StructuredMemorySearchService,
-    TagSummary,
 )
 from deerflow.memory.structured_memory_write_service import (
     StructuredMemoryWriteError,
@@ -56,7 +55,6 @@ __all__ = [
     "StructuredMemorySearchError",
     "StructuredMemorySearchService",
     "SearchResultItem",
-    "TagSummary",
     "MemoryWithLineage",
     "TagManifestEntry",
     "TagManifestService",

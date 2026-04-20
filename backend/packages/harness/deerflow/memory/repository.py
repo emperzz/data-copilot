@@ -20,6 +20,7 @@ from deerflow.config.structured_memory_config import (
 from deerflow.memory._shared import (
     TIER_TO_COLLECTION_ATTR,
     _json_to_string_list,
+    _memory_record_from_metadata,
     _string_list_to_json,
     utc_now_iso_z,
 )
@@ -348,7 +349,7 @@ class StructuredMemoryRepository:
         metadata = (result.get("metadatas") or [{}])[0] or {}
         document = ((result.get("documents") or [""])[0] or "").strip()
         metadata = {**metadata, "id": ids[0]}
-        return self._migrate_legacy_raw_metadata(metadata, document)
+        return _memory_record_from_metadata(MemoryTier.RAW, ids, metadata, document)
 
     def get_distilled_memory(self, memory_id: str) -> DistilledMemoryRecord | None:
         """Fetch one distilled memory by id."""
@@ -358,19 +359,7 @@ class StructuredMemoryRepository:
             return None
         metadata = (result.get("metadatas") or [{}])[0] or {}
         document = ((result.get("documents") or [""])[0] or "").strip()
-        title_raw = metadata.get("title")
-        title = (str(title_raw).strip() if title_raw is not None else "") or _fallback_title(document)
-        return DistilledMemoryRecord(
-            id=ids[0],
-            title=title[:TITLE_MAX_LENGTH],
-            content=document,
-            created_at=str(metadata.get("created_at", "")),
-            updated_at=str(metadata.get("updated_at", "")),
-            tags=_json_to_string_list(metadata.get("tags_json")),
-            source_agent=str(metadata.get("source_agent", self._default_source_agent)),
-            user=str(metadata.get("user", self._default_user)),
-            raw_memory_ids=_json_to_string_list(metadata.get("raw_memory_ids_json")),
-        )
+        return _memory_record_from_metadata(MemoryTier.DISTILLED, ids, metadata, document)
 
     def get_core_memory(self, memory_id: str) -> CoreMemoryRecord | None:
         """Fetch one core memory by id."""
@@ -380,22 +369,7 @@ class StructuredMemoryRepository:
             return None
         metadata = (result.get("metadatas") or [{}])[0] or {}
         document = ((result.get("documents") or [""])[0] or "").strip()
-        title_raw = metadata.get("title")
-        title = (str(title_raw).strip() if title_raw is not None else "") or _fallback_title(document)
-        distilled_ids = _json_to_string_list(metadata.get("distilled_memory_ids_json"))
-        if not distilled_ids:
-            return None
-        return CoreMemoryRecord(
-            id=ids[0],
-            title=title[:TITLE_MAX_LENGTH],
-            content=document,
-            created_at=str(metadata.get("created_at", "")),
-            updated_at=str(metadata.get("updated_at", "")),
-            tags=_json_to_string_list(metadata.get("tags_json")),
-            source_agent=str(metadata.get("source_agent", self._default_source_agent)),
-            user=str(metadata.get("user", self._default_user)),
-            distilled_memory_ids=distilled_ids,
-        )
+        return _memory_record_from_metadata(MemoryTier.CORE, ids, metadata, document)
 
     def update_memory(
         self,
@@ -584,6 +558,22 @@ class StructuredMemoryRepository:
                 continue
             if upstream:
                 yield (mid, upstream)
+
+    def find_distilled_referencing_raw(self, raw_id: str) -> list[str]:
+        """Return ids of distilled records that reference ``raw_id``."""
+        blockers: list[str] = []
+        for dist_id, raw_ids in self.iter_lineage_refs(MemoryTier.DISTILLED):
+            if raw_id in raw_ids:
+                blockers.append(dist_id)
+        return blockers
+
+    def find_core_referencing_distilled(self, distilled_id: str) -> list[str]:
+        """Return ids of core records that reference ``distilled_id``."""
+        blockers: list[str] = []
+        for core_id, distilled_ids in self.iter_lineage_refs(MemoryTier.CORE):
+            if distilled_id in distilled_ids:
+                blockers.append(core_id)
+        return blockers
 
     def count(self, tier: MemoryTier) -> int:
         """Return the number of records in ``tier``."""
