@@ -166,6 +166,13 @@ start() {
     echo "=========================================="
     echo ""
 
+    if [ -f "$PROJECT_ROOT/.env" ]; then
+        set -a
+        # shellcheck disable=SC1091
+        source "$PROJECT_ROOT/.env"
+        set +a
+    fi
+
     sandbox_mode="$(detect_sandbox_mode)"
 
     if $gateway_mode; then

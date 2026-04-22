@@ -178,8 +178,15 @@ fi
 
 if ! $SKIP_INSTALL; then
     echo "Syncing dependencies..."
+    if [ -n "${UV_INDEX_URL:-}" ]; then
+        echo "Using UV_INDEX_URL mirror: $UV_INDEX_URL"
+    fi
     (cd backend && uv sync --quiet) || { echo "✗ Backend dependency install failed"; exit 1; }
     (cd frontend && pnpm install --silent) || { echo "✗ Frontend dependency install failed"; exit 1; }
+    if [ -n "${HF_ENDPOINT:-}" ]; then
+        echo "Using HF_ENDPOINT mirror: $HF_ENDPOINT"
+    fi
+    (cd backend && PYTHONPATH=. uv run python download_chroma_embedding_model.py) || { echo "✗ Embedding model download failed"; exit 1; }
     echo "✓ Dependencies synced"
 else
     echo "⏩ Skipping dependency install (--skip-install)"

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
+from chromadb.utils import embedding_functions
 
 from deerflow.config.memory_config import get_memory_config
 from deerflow.config.paths import get_paths
@@ -108,14 +109,17 @@ class StructuredMemoryRepository:
         persist_directory: str | Path | None = None,
         default_user: str = DEFAULT_MEMORY_USER,
         default_source_agent: str = DEFAULT_MEMORY_AGENT,
+        embedding_model_name: str | None = None,
     ) -> None:
         default_path = get_paths().base_dir / "memory" / "chromadb"
         self._persist_directory = Path(persist_directory or default_path)
         self._persist_directory.mkdir(parents=True, exist_ok=True)
+        configured_model_name = embedding_model_name or get_structured_memory_config().embedding_model_name
+        self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=configured_model_name)
         self._client = chromadb.PersistentClient(path=str(self._persist_directory))
-        self._raw_collection = self._client.get_or_create_collection(name=RAW_COLLECTION_NAME)
-        self._distilled_collection = self._client.get_or_create_collection(name=DISTILLED_COLLECTION_NAME)
-        self._core_collection = self._client.get_or_create_collection(name=CORE_COLLECTION_NAME)
+        self._raw_collection = self._client.get_or_create_collection(name=RAW_COLLECTION_NAME, embedding_function=self._embedding_function)
+        self._distilled_collection = self._client.get_or_create_collection(name=DISTILLED_COLLECTION_NAME, embedding_function=self._embedding_function)
+        self._core_collection = self._client.get_or_create_collection(name=CORE_COLLECTION_NAME, embedding_function=self._embedding_function)
         self._tag_manifest_collection = self._client.get_or_create_collection(name=TAG_MANIFEST_COLLECTION_NAME)
         self._default_user = default_user
         self._default_source_agent = default_source_agent
@@ -608,5 +612,6 @@ def get_structured_memory_repository() -> StructuredMemoryRepository:
         if _repository_instance is None:
             _repository_instance = StructuredMemoryRepository(
                 persist_directory=_resolve_structured_persist_directory(),
+                embedding_model_name=sm_cfg.embedding_model_name,
             )
     return _repository_instance

@@ -85,6 +85,11 @@ class StructuredMemoryConfig(BaseModel):
         default="chroma",
         description="Backend for structured memory. Only ``chroma`` is supported in this release.",
     )
+    embedding_model_name: str = Field(
+        default="all-MiniLM-L6-v2",
+        min_length=1,
+        description="Sentence-Transformers model name used by Chroma embedding function.",
+    )
     write: StructuredMemoryWriteConfig = Field(
         default_factory=StructuredMemoryWriteConfig,
         description="Write tool and service limits.",

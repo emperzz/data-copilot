@@ -724,6 +724,7 @@ memory:
 structured_memory:
   enabled: true
   store: chroma
+  embedding_model_name: all-MiniLM-L6-v2
   # Limits for the structured_memory_write tool (single-record body size).
   write:
     max_content_length: 100000
