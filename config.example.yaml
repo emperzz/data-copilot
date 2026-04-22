@@ -724,6 +724,7 @@ memory:
 structured_memory:
   enabled: true
   store: chroma
+  # Default is small and mirror-friendly. For BAAI/bge-* ensure HF_ENDPOINT (e.g. hf-mirror) actually serves that repo, or use https://huggingface.co.
   embedding_model_name: all-MiniLM-L6-v2
   # Limits for the structured_memory_write tool (single-record body size).
   write:
