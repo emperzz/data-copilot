@@ -101,6 +101,14 @@ def _resolve_structured_persist_directory() -> Path:
     return memory_file.parent / "chromadb"
 
 
+def _resolve_structured_embedding_cache_directory() -> Path:
+    """Resolve persistent cache dir for sentence-transformers model files."""
+    # Keep embedding cache colocated with DeerFlow runtime state so it is
+    # stable across host/container path differences.
+    memory_file = get_paths().memory_file
+    return memory_file.parent / "huggingface"
+
+
 class StructuredMemoryRepository:
     """Repository for raw/distilled/core structured memory tiers."""
 
@@ -114,8 +122,13 @@ class StructuredMemoryRepository:
         default_path = get_paths().base_dir / "memory" / "chromadb"
         self._persist_directory = Path(persist_directory or default_path)
         self._persist_directory.mkdir(parents=True, exist_ok=True)
+        self._embedding_cache_directory = _resolve_structured_embedding_cache_directory()
+        self._embedding_cache_directory.mkdir(parents=True, exist_ok=True)
         configured_model_name = embedding_model_name or get_structured_memory_config().embedding_model_name
-        self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=configured_model_name)
+        self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=configured_model_name,
+            cache_folder=str(self._embedding_cache_directory),
+        )
         self._client = chromadb.PersistentClient(path=str(self._persist_directory))
         self._raw_collection = self._client.get_or_create_collection(name=RAW_COLLECTION_NAME, embedding_function=self._embedding_function)
         self._distilled_collection = self._client.get_or_create_collection(name=DISTILLED_COLLECTION_NAME, embedding_function=self._embedding_function)
@@ -610,6 +623,8 @@ def initialize_structured_memory_chromadb() -> StructuredMemoryRepository:
 
     persist_directory = _resolve_structured_persist_directory()
     persist_directory.mkdir(parents=True, exist_ok=True)
+    embedding_cache_directory = _resolve_structured_embedding_cache_directory()
+    embedding_cache_directory.mkdir(parents=True, exist_ok=True)
     client = chromadb.PersistentClient(path=str(persist_directory))
 
     existing_names = {collection.name for collection in client.list_collections()}
@@ -622,7 +637,10 @@ def initialize_structured_memory_chromadb() -> StructuredMemoryRepository:
         if name in existing_names:
             client.delete_collection(name=name)
 
-    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=sm_cfg.embedding_model_name)
+    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name=sm_cfg.embedding_model_name,
+        cache_folder=str(embedding_cache_directory),
+    )
     client.get_or_create_collection(name=RAW_COLLECTION_NAME, embedding_function=embedding_function)
     client.get_or_create_collection(name=DISTILLED_COLLECTION_NAME, embedding_function=embedding_function)
     client.get_or_create_collection(name=CORE_COLLECTION_NAME, embedding_function=embedding_function)
