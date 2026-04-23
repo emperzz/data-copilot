@@ -11,7 +11,7 @@ from deerflow.memory._shared import (
     _normalize_tags,
     _normalize_title,
 )
-from deerflow.memory.models import MemoryTier, StructuredMemoryWriteError
+from deerflow.memory.models import MemoryTier
 from deerflow.memory.repository import StructuredMemoryRepository, get_structured_memory_repository
 from deerflow.memory.tag_manifest_service import get_tag_manifest_service
 

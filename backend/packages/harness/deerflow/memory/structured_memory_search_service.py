@@ -19,7 +19,7 @@ from deerflow.memory.models import (
     MemoryRecordCommon,
 )
 from deerflow.memory.repository import StructuredMemoryRepository, get_structured_memory_repository
-from deerflow.memory.tag_manifest_service import TagManifestEntry, get_tag_manifest_service
+from deerflow.memory.tag_manifest_service import TagManifestEntry, TagManifestService, get_tag_manifest_service
 
 
 class StructuredMemorySearchError(ValueError):
@@ -83,6 +83,9 @@ class StructuredMemorySearchService:
 
     def __init__(self, repository: StructuredMemoryRepository | None = None) -> None:
         self._repository = repository
+        self._tag_manifest: TagManifestService | None = (
+            TagManifestService(repository=repository) if repository is not None else None
+        )
 
     def _repo(self) -> StructuredMemoryRepository:
         if self._repository is not None:
@@ -165,7 +168,7 @@ class StructuredMemorySearchService:
     # ------------------------------------------------------------------
 
     def list_tags(self, *, tier_filter: list[str] | None = None) -> list[TagManifestEntry]:
-        manifest = get_tag_manifest_service()
+        manifest = self._tag_manifest or get_tag_manifest_service()
         return manifest.snapshot(tier_filter=tier_filter)
 
     # ------------------------------------------------------------------

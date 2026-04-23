@@ -7,6 +7,7 @@ import yaml
 from pydantic import ValidationError
 
 from deerflow.config.app_config import get_app_config, reset_app_config
+from deerflow.config.memory_config import get_memory_config, load_memory_config_from_dict
 from deerflow.config.structured_memory_config import (
     StructuredMemoryConfig,
     StructuredMemoryDisabledError,
@@ -18,6 +19,7 @@ from deerflow.memory.repository import (
     get_structured_memory_repository,
     reset_structured_memory_repository_singleton,
 )
+from deerflow.memory.tag_manifest_service import reset_tag_manifest_service_singleton
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +28,7 @@ def _restore_structured_memory_config():
     yield
     set_structured_memory_config(previous)
     reset_structured_memory_repository_singleton()
+    reset_tag_manifest_service_singleton()
 
 
 def test_structured_memory_config_defaults() -> None:
@@ -54,11 +57,17 @@ def test_get_structured_memory_repository_raises_when_disabled() -> None:
         get_structured_memory_repository()
 
 
-def test_get_structured_memory_repository_returns_when_enabled() -> None:
-    load_structured_memory_config_from_dict({"enabled": True, "store": "chroma"})
-    reset_structured_memory_repository_singleton()
-    repo = get_structured_memory_repository()
-    assert repo is not None
+def test_get_structured_memory_repository_returns_when_enabled(tmp_path) -> None:
+    prev_memory = get_memory_config().model_copy()
+    try:
+        load_memory_config_from_dict({"storage_path": str(tmp_path / "memory.json")})
+        load_structured_memory_config_from_dict({"enabled": True, "store": "chroma"})
+        reset_structured_memory_repository_singleton()
+        repo = get_structured_memory_repository()
+        assert repo is not None
+    finally:
+        load_memory_config_from_dict(prev_memory.model_dump())
+        reset_structured_memory_repository_singleton()
 
 
 def test_app_config_yaml_updates_structured_memory_singleton(tmp_path, monkeypatch) -> None:

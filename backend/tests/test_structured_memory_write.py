@@ -160,7 +160,7 @@ def test_get_available_tools_structured_memory_write_toggle(monkeypatch) -> None
 def test_structured_memory_write_tool_raw_success(tmp_path, monkeypatch) -> None:
     repo = StructuredMemoryRepository(persist_directory=tmp_path / "c")
     monkeypatch.setattr(
-        "deerflow.memory.repository.get_structured_memory_repository",
+        "deerflow.memory.structured_memory_write_service.get_structured_memory_repository",
         lambda: repo,
     )
     load_structured_memory_config_from_dict({"enabled": True, "store": "chroma"})

@@ -254,7 +254,7 @@ def _normalize_tags(tags: list[str] | None) -> list[str]:
 
 def _normalize_title(title: str) -> str:
     """Strip title, raise if empty, truncate if too long."""
-    from deerflow.memory.models import StructuredMemoryWriteError, TITLE_MAX_LENGTH
+    from deerflow.memory.models import TITLE_MAX_LENGTH, StructuredMemoryWriteError
 
     t = title.strip()
     if not t:

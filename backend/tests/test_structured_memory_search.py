@@ -22,6 +22,7 @@ from deerflow.memory.structured_memory_search_service import (
     StructuredMemorySearchError,
     StructuredMemorySearchService,
 )
+from deerflow.memory.tag_manifest_service import reset_tag_manifest_service_singleton
 
 sm_query_tool_module = importlib.import_module("deerflow.tools.builtins.structured_memory_query_tool")
 sm_list_tags_tool_module = importlib.import_module("deerflow.tools.builtins.structured_memory_list_tags_tool")
@@ -34,6 +35,7 @@ def _restore_sm_state():
     yield
     set_structured_memory_config(previous)
     reset_structured_memory_repository_singleton()
+    reset_tag_manifest_service_singleton()
 
 
 @pytest.fixture()
@@ -253,6 +255,10 @@ def test_query_tool_returns_results(seeded_repo: StructuredMemoryRepository, mon
 def test_list_tags_tool_returns_tags(seeded_repo: StructuredMemoryRepository, monkeypatch) -> None:
     monkeypatch.setattr(
         "deerflow.memory.structured_memory_search_service.get_structured_memory_repository",
+        lambda: seeded_repo,
+    )
+    monkeypatch.setattr(
+        "deerflow.memory.tag_manifest_service.get_structured_memory_repository",
         lambda: seeded_repo,
     )
     load_structured_memory_config_from_dict({"enabled": True, "store": "chroma"})

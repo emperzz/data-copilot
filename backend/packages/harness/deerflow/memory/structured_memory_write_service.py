@@ -11,7 +11,7 @@ from deerflow.memory._shared import (
     _normalize_tags,
     _normalize_title,
 )
-from deerflow.memory.models import TITLE_MAX_LENGTH, MemoryTier, StructuredMemoryWriteError
+from deerflow.memory.models import MemoryTier, StructuredMemoryWriteError
 from deerflow.memory.repository import StructuredMemoryRepository, get_structured_memory_repository
 from deerflow.memory.tag_manifest_service import get_tag_manifest_service
 
@@ -63,7 +63,6 @@ class StructuredMemoryWriteService:
         norm_title = _normalize_title(title)
         norm_content = _normalize_content(content, max_len=max_len)
         norm_tags = _normalize_tags(tags)
-        repo = self._repo()
 
         if tier == MemoryTier.RAW.value:
             sid = (source_thread_id or "").strip()
@@ -72,6 +71,11 @@ class StructuredMemoryWriteService:
                     "raw tier requires a non-empty source_thread_id: the LangGraph conversation thread "
                     "this raw row documents (never inferred in the service layer)."
                 )
+
+        repo = self._repo()
+
+        if tier == MemoryTier.RAW.value:
+            sid = (source_thread_id or "").strip()
             record = repo.create_raw_memory(
                 title=norm_title,
                 content=norm_content,
