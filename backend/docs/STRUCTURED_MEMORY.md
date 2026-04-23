@@ -190,8 +190,27 @@ prompt 中已约束如下命名维度（建议每条 3–8 个标签）：
 | `Cannot delete raw memory that is referenced by distilled memory` | 删序错误；先删下游 distilled / core，或更新其 lineage |
 | `Structured memory is disabled` | `structured_memory.enabled=false`，或工具被禁用 |
 | 查询命中 0 结果 | tier 默认仅 core+distilled；若只写过 raw，需显式 `tier_filter=["raw"]`；或先 `list_tags` 确认 tag 拼写 |
+| `An embedding function already exists in the collection configuration...` | 历史库中的 collection 使用了不同 embedding 配置。可在后端手动调用 `initialize_structured_memory_chromadb()`：清空 `memory_raw/distilled/core/tag_manifest` 并按当前 `structured_memory.embedding_model_name` 重建 |
 
-## 11. 单测入口
+## 11. 手动初始化（清理测试/历史脏数据）
+
+当 ChromaDB 混入大量测试数据、历史脏数据，或出现 embedding function 冲突时，可在后端手动执行一次初始化：
+
+```python
+from deerflow.memory import initialize_structured_memory_chromadb
+
+repo = initialize_structured_memory_chromadb()
+```
+
+行为说明：
+
+- 删除结构化记忆的四个 collection：`memory_raw`、`memory_distilled`、`memory_core`、`memory_tag_manifest`
+- 按当前配置的 `structured_memory.embedding_model_name` 重新创建 collection
+- 重置 repository/tag manifest 单例，返回新的 `StructuredMemoryRepository`
+
+注意：该操作会清空现有结构化记忆数据，仅建议在开发/测试阶段或确认可重建数据时使用。
+
+## 12. 单测入口
 
 | 文件 | 覆盖范围 |
 |---|---|

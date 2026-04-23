@@ -592,6 +592,49 @@ _repository_instance: StructuredMemoryRepository | None = None
 _repository_lock = threading.Lock()
 
 
+def initialize_structured_memory_chromadb() -> StructuredMemoryRepository:
+    """Reset structured-memory Chroma collections and recreate them.
+
+    This function is intentionally backend-only and meant for manual invocation
+    during development/testing cleanup. It:
+    1) drops all structured-memory collections to remove historical/dirty data;
+    2) recreates them with the current configured embedding function to avoid
+       persisted embedding-function conflicts;
+    3) resets process singletons and returns a fresh repository instance.
+    """
+    sm_cfg = get_structured_memory_config()
+    if not sm_cfg.enabled:
+        raise StructuredMemoryDisabledError(
+            "Structured memory is disabled; set structured_memory.enabled to true in config.yaml.",
+        )
+
+    persist_directory = _resolve_structured_persist_directory()
+    persist_directory.mkdir(parents=True, exist_ok=True)
+    client = chromadb.PersistentClient(path=str(persist_directory))
+
+    existing_names = {collection.name for collection in client.list_collections()}
+    for name in (
+        RAW_COLLECTION_NAME,
+        DISTILLED_COLLECTION_NAME,
+        CORE_COLLECTION_NAME,
+        TAG_MANIFEST_COLLECTION_NAME,
+    ):
+        if name in existing_names:
+            client.delete_collection(name=name)
+
+    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=sm_cfg.embedding_model_name)
+    client.get_or_create_collection(name=RAW_COLLECTION_NAME, embedding_function=embedding_function)
+    client.get_or_create_collection(name=DISTILLED_COLLECTION_NAME, embedding_function=embedding_function)
+    client.get_or_create_collection(name=CORE_COLLECTION_NAME, embedding_function=embedding_function)
+    client.get_or_create_collection(name=TAG_MANIFEST_COLLECTION_NAME)
+
+    reset_structured_memory_repository_singleton()
+    from deerflow.memory.tag_manifest_service import reset_tag_manifest_service_singleton
+
+    reset_tag_manifest_service_singleton()
+    return get_structured_memory_repository()
+
+
 def reset_structured_memory_repository_singleton() -> None:
     """Clear the process-wide repository singleton (for tests or config hot-swap)."""
     global _repository_instance

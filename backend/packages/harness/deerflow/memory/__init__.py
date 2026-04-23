@@ -14,6 +14,7 @@ from deerflow.memory.models import (
 from deerflow.memory.repository import (
     StructuredMemoryRepository,
     get_structured_memory_repository,
+    initialize_structured_memory_chromadb,
     reset_structured_memory_repository_singleton,
 )
 from deerflow.memory.structured_memory_search_service import (
@@ -47,6 +48,7 @@ __all__ = [
     "StructuredMemoryRepository",
     "StructuredMemoryDisabledError",
     "get_structured_memory_repository",
+    "initialize_structured_memory_chromadb",
     "reset_structured_memory_repository_singleton",
     "StructuredMemoryWriteError",
     "StructuredMemoryWriteResult",

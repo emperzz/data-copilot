@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import chromadb
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -15,8 +16,10 @@ from deerflow.config.structured_memory_config import (
     load_structured_memory_config_from_dict,
     set_structured_memory_config,
 )
+from deerflow.memory.models import MemoryTier
 from deerflow.memory.repository import (
     get_structured_memory_repository,
+    initialize_structured_memory_chromadb,
     reset_structured_memory_repository_singleton,
 )
 from deerflow.memory.tag_manifest_service import reset_tag_manifest_service_singleton
@@ -65,6 +68,53 @@ def test_get_structured_memory_repository_returns_when_enabled(tmp_path) -> None
         reset_structured_memory_repository_singleton()
         repo = get_structured_memory_repository()
         assert repo is not None
+    finally:
+        load_memory_config_from_dict(prev_memory.model_dump())
+        reset_structured_memory_repository_singleton()
+
+
+def test_initialize_structured_memory_chromadb_cleans_existing_data(tmp_path) -> None:
+    prev_memory = get_memory_config().model_copy()
+    try:
+        load_memory_config_from_dict({"storage_path": str(tmp_path / "memory.json")})
+        load_structured_memory_config_from_dict({"enabled": True, "store": "chroma"})
+        reset_structured_memory_repository_singleton()
+
+        repo = get_structured_memory_repository()
+        repo.create_raw_memory(title="r1", content="c1", source_thread_id="tid-1", tags=["alpha"])
+        assert repo.count(MemoryTier.RAW) == 1
+
+        reinitialized = initialize_structured_memory_chromadb()
+        assert reinitialized.count(MemoryTier.RAW) == 0
+        assert reinitialized.count(MemoryTier.DISTILLED) == 0
+        assert reinitialized.count(MemoryTier.CORE) == 0
+        assert reinitialized.list_tag_manifest() == []
+    finally:
+        load_memory_config_from_dict(prev_memory.model_dump())
+        reset_structured_memory_repository_singleton()
+
+
+def test_initialize_structured_memory_chromadb_recovers_embedding_conflict(tmp_path) -> None:
+    prev_memory = get_memory_config().model_copy()
+    try:
+        load_memory_config_from_dict({"storage_path": str(tmp_path / "memory.json")})
+        load_structured_memory_config_from_dict({"enabled": True, "store": "chroma"})
+        reset_structured_memory_repository_singleton()
+
+        persist_dir = tmp_path / "chromadb"
+        persist_dir.mkdir(parents=True, exist_ok=True)
+        client = chromadb.PersistentClient(path=str(persist_dir))
+        client.get_or_create_collection(name="memory_raw")
+        client.get_or_create_collection(name="memory_distilled")
+        client.get_or_create_collection(name="memory_core")
+        client.get_or_create_collection(name="memory_tag_manifest")
+
+        with pytest.raises(Exception):
+            get_structured_memory_repository()
+
+        repo = initialize_structured_memory_chromadb()
+        created = repo.create_raw_memory(title="ok", content="ok", source_thread_id="tid-1")
+        assert created.id.startswith("raw_")
     finally:
         load_memory_config_from_dict(prev_memory.model_dump())
         reset_structured_memory_repository_singleton()

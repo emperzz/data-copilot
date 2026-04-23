@@ -15,7 +15,7 @@ backend/packages/harness/deerflow/
 └── memory/
     ├── __init__.py                      # 对外导出
     ├── models.py                        # MemoryTier + Raw/Distilled/Core + TagManifestRecord
-    ├── repository.py                    # Chroma 4 个 collection：raw/distilled/core + tag_manifest
+    ├── repository.py                    # Chroma 4 个 collection：raw/distilled/core + tag_manifest；手动初始化入口
     ├── structured_memory_write_service.py     # 校验 + 规范化 + 写入分发（成功后 bump manifest）
     ├── structured_memory_search_service.py    # search / list_tags / get_by_id + 格式化
     ├── structured_memory_mutation_service.py  # update / delete + 下游引用保护 + manifest 差量
@@ -43,6 +43,7 @@ backend/tests/
 | 配置开关 + 单例 | `structured_memory_config.py`、`repository.get_structured_memory_repository` | `enabled=false` 抛 `StructuredMemoryDisabledError` |
 | Chroma 持久化 | `StructuredMemoryRepository` | 四 collection：`memory_raw/distilled/core` + `memory_tag_manifest` |
 | 显式写入 | `StructuredMemoryWriteService.normalize_and_write` + `structured_memory_write` 工具 | 校验长度、tier 字段；血缘前置存在性校验；成功后 bump tag manifest |
+| **手动初始化（清库+重建 embedding）** | `repository.initialize_structured_memory_chromadb` | 后端按需手动调用；删除 `memory_raw/distilled/core/tag_manifest` 后按当前 embedding 重新建库，解决历史脏数据与 embedding function 冲突 |
 | 检索 | `StructuredMemorySearchService.search` + `structured_memory_query` | 默认 `core+distilled`；tag 过滤为召回后过滤 |
 | 标签发现 | `list_tags` + `structured_memory_list_tags` | 按 tier 维度计数（基于全表扫描） |
 | 血缘回溯 | `get_by_id(include_upstream=True)` | core → distilled → raw 最深 2 层 |
@@ -222,6 +223,28 @@ class TagManifestService:
 - 当前 lead agent 已用统一 react loop 处理两类对话；引入硬分类会与 plan mode、subagent 分支耦合。
 - **建议**：以**软提示**形式让 agent 自行判断（在 prompt 中加 `先判断本轮是「问答/咨询」还是「执行任务」，再决定是否触发写入路径`），而**不增加新的中间件状态字段**。
 - 真正需要硬分类时，再新增 `ConversationIntentMiddleware`（参考 `ClarificationMiddleware` 结构），输出 `state.conversation_intent: Literal["consult","task"]`。
+
+### 3.2.1 Chroma 手动初始化（已落地）
+
+为处理测试阶段历史脏数据与 embedding function 冲突，`StructuredMemoryRepository` 已提供后端手动入口：
+
+```python
+from deerflow.memory import initialize_structured_memory_chromadb
+
+repo = initialize_structured_memory_chromadb()
+```
+
+执行语义：
+
+1. 读取当前 `structured_memory.embedding_model_name`。
+2. 删除 `memory_raw`、`memory_distilled`、`memory_core`、`memory_tag_manifest`。
+3. 以当前 embedding 配置重建上述 collection。
+4. 重置 repository/tag manifest 单例并返回新实例。
+
+适用场景：
+
+- 启动时报错：`An embedding function already exists in the collection configuration...`
+- 开发/测试阶段需要一次性清理 Chroma 中混杂的历史或测试数据。
 
 ### 3.3 统一检索 Pipeline（新增 `StructuredMemoryRetrievalPipeline`）
 
@@ -437,6 +460,7 @@ cd backend && uvx ruff check .
 | 用户流程图节点 | 落地代码 / 模块 | 状态 |
 |---|---|---|
 | 加载并同步 Tag 清单 | `TagManifestService.snapshot` + `repo.list_tag_manifest` | ✅ 已落地 |
+| 手动初始化 Chroma（清脏数据 + 重建 embedding） | `initialize_structured_memory_chromadb` | ✅ 已落地 |
 | 传递 Tag 名称、含义、各 Tier 计数 | `TagManifestService.snapshot_text` → prompt | ✅ 已落地（含义/定义字段预留） |
 | 判断对话类型 | Agent prompt 软判定（默认）；`ConversationIntentMiddleware`（可选） | 软判定即可 |
 | 优先检索 Core | `RetrievalPipeline.cascade_query` step 1 | 规划 |
