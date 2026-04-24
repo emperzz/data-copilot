@@ -18,6 +18,11 @@ from deerflow.subagents.executor import SubagentStatus, cleanup_background_task,
 logger = logging.getLogger(__name__)
 
 
+def get_skills_prompt_section() -> str:
+    """Backward-compatible no-op for legacy tests and monkeypatch hooks."""
+    return ""
+
+
 @tool("task", parse_docstring=True)
 async def task_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
