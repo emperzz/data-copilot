@@ -117,7 +117,7 @@ def _build_permission_response(options: list[Any], *, auto_approve: bool) -> Any
                     continue
 
                 return RequestPermissionResponse(
-                    outcome=AllowedOutcome(outcome="selected", optionId=option_id),
+                    outcome=AllowedOutcome(outcome="selected", option_id=option_id),
                 )
 
     return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
