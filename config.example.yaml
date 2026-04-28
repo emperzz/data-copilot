@@ -776,6 +776,18 @@ memory:
   max_injection_tokens: 2000 # Maximum tokens for memory injection
 
 # ============================================================================
+# Enterprise Structured Memory
+# ============================================================================
+# Structured memory for data warehouse metadata, business definitions, and
+# task history. Markdown files stored on disk, index injected into the system
+# prompt, entity details loaded on demand via dedicated tools.
+structured_memory:
+  enabled: false
+  storage_path: "" # Defaults to {base_dir}/structured_memory/
+  injection_enabled: true # Whether to inject index into system prompt
+  max_index_tokens: 1500 # Token budget for index injection
+
+# ============================================================================
 # Custom Agent Management API
 # ============================================================================
 # Controls whether the HTTP gateway exposes custom-agent SOUL/USER.md management.
