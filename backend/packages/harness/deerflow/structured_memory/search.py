@@ -52,7 +52,7 @@ def search_memory_files(query: str, category: str = "all") -> str:
                 continue
 
             if query_lower in content.lower():
-                rel_path = file_path.relative_to(store.root)
+                rel_path = str(file_path.relative_to(store.root)).replace("\\", "/")
                 lines = content.split("\n")
                 matching_lines: list[str] = []
                 for i, line in enumerate(lines):
