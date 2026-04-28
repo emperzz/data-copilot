@@ -351,6 +351,7 @@ You are {agent_name}, an open-source super agent.
 
 {soul}
 {memory_context}
+{structured_memory_context}
 
 <thinking_style>
 - Think concisely and strategically about the user's request BEFORE taking action
@@ -568,6 +569,68 @@ def _get_memory_context(agent_name: str | None = None) -> str:
         return ""
 
 
+def _get_structured_memory_context() -> str:
+    """Get structured memory index for injection into system prompt.
+
+    Injects only the top-level indexes (facts/index.md and tasks/index.md),
+    not the full entity details. Agent loads details on demand via tools.
+
+    Returns:
+        Formatted structured memory context wrapped in XML tags, or empty string.
+    """
+    try:
+        from deerflow.config.structured_memory_config import get_structured_memory_config
+        from deerflow.structured_memory.storage import get_structured_memory_store
+
+        config = get_structured_memory_config()
+        if not config.enabled or not config.injection_enabled:
+            return ""
+
+        store = get_structured_memory_store()
+        store.ensure_directories()
+
+        sections: list[str] = []
+
+        # Read facts index
+        try:
+            facts_index = store.read_file("facts/index.md")
+            max_chars = config.max_index_tokens * 3  # rough char estimate
+            if len(facts_index) > max_chars:
+                facts_index = facts_index[:max_chars] + "\n\n... (truncated, use tools for full index)"
+            sections.append(facts_index)
+        except FileNotFoundError:
+            sections.append("(No facts memory yet. Use `update_memory_index` and `write_file` to add.)")
+
+        # Read tasks index
+        try:
+            tasks_index = store.read_file("tasks/index.md")
+            max_chars = config.max_index_tokens * 2
+            if len(tasks_index) > max_chars:
+                tasks_index = tasks_index[:max_chars] + "\n\n... (truncated, use tools for full index)"
+            sections.append(tasks_index)
+        except FileNotFoundError:
+            sections.append("(No task memory yet.)")
+
+        content = "\n\n".join(sections)
+        if not content.strip():
+            return ""
+
+        return f"""<structured_memory>
+Below is the enterprise structured memory index. This contains data warehouse
+metadata, business definitions, and task history the user has provided.
+Only the index is shown here — use `get_memory_entity` to load detailed
+entity files, `search_structured_memory` to find information by keyword,
+`list_memory_entities` to browse the directory, and `update_memory_index`
+to maintain index files.
+
+{content}
+</structured_memory>
+"""
+    except Exception as e:
+        logger.error("Failed to load structured memory context: %s", e)
+        return ""
+
+
 @lru_cache(maxsize=32)
 def _get_cached_skills_prompt_section(
     skill_signature: tuple[tuple[str, str, str, str], ...],
@@ -707,6 +770,9 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
     # Get memory context
     memory_context = _get_memory_context(agent_name)
 
+    # Get structured memory context
+    structured_memory_context = _get_structured_memory_context()
+
     # Include subagent section only if enabled (from runtime parameter)
     n = max_concurrent_subagents
     subagent_section = _build_subagent_section(n) if subagent_enabled else ""
@@ -747,6 +813,7 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
         skills_section=skills_section,
         deferred_tools_section=deferred_tools_section,
         memory_context=memory_context,
+        structured_memory_context=structured_memory_context,
         subagent_section=subagent_section,
         subagent_reminder=subagent_reminder,
         subagent_thinking=subagent_thinking,
