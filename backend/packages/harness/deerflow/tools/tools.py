@@ -84,6 +84,24 @@ def get_available_tools(
 
         builtin_tools.append(skill_manage_tool)
 
+    # Add structured memory tools if enabled
+    structured_memory_config = getattr(config, "structured_memory", None)
+    if getattr(structured_memory_config, "enabled", False):
+        from deerflow.tools.builtins.structured_memory_tools import (
+            get_memory_entity,
+            list_memory_entities,
+            search_structured_memory,
+            update_memory_index,
+        )
+
+        builtin_tools.extend([
+            search_structured_memory,
+            get_memory_entity,
+            list_memory_entities,
+            update_memory_index,
+        ])
+        logger.info("Including structured memory tools")
+
     # Add subagent tools only if enabled via runtime parameter
     if subagent_enabled:
         builtin_tools.extend(SUBAGENT_TOOLS)
