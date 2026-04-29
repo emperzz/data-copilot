@@ -238,6 +238,15 @@ start() {
         export LANGGRAPH_REWRITE=/api/
     fi
 
+    # Load .env so that its variables are available to docker-compose build args.
+    # The env_file directive only passes vars to running containers, not to build args.
+    if [ -f "$PROJECT_ROOT/.env" ]; then
+        set -a
+        # shellcheck source=/dev/null
+        source "$PROJECT_ROOT/.env"
+        set +a
+    fi
+
     echo "Building and starting containers..."
     cd "$DOCKER_DIR" && $COMPOSE_CMD up --build -d --remove-orphans $services
     echo ""
