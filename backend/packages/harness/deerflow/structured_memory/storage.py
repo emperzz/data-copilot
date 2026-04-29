@@ -2,6 +2,8 @@
 
 import logging
 import os
+import threading
+import uuid
 from pathlib import Path
 
 from deerflow.config.paths import get_paths
@@ -10,6 +12,8 @@ from deerflow.config.structured_memory_config import get_structured_memory_confi
 logger = logging.getLogger(__name__)
 
 MEMORY_ROOT_DIRNAME = "structured_memory"
+
+_lock = threading.Lock()
 
 
 def _resolve_storage_root() -> Path:
@@ -50,12 +54,13 @@ class StructuredMemoryStore:
     def resolve_path(self, relative_path: str) -> Path:
         """Resolve a relative path within the memory root.
 
-        Rejects paths containing '..' to prevent traversal.
+        Validates that the resolved path stays within the memory root.
         """
         normalized = os.path.normpath(relative_path)
-        if ".." in normalized.split(os.sep):
+        target = (self.root / normalized).resolve()
+        if not target.is_relative_to(self.root):
             raise ValueError(f"Path traversal rejected: {relative_path!r}")
-        return (self.root / normalized).resolve()
+        return target
 
     def read_file(self, relative_path: str) -> str:
         """Read a memory file by relative path."""
@@ -65,10 +70,18 @@ class StructuredMemoryStore:
         return target.read_text(encoding="utf-8")
 
     def write_file(self, relative_path: str, content: str) -> None:
-        """Write (create or overwrite) a memory file."""
+        """Write (create or overwrite) a memory file atomically."""
         target = self.resolve_path(relative_path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        # Atomic write: temp file + rename
+        tmp_path = target.parent / f".{uuid.uuid4().hex}.tmp"
+        try:
+            tmp_path.write_text(content, encoding="utf-8")
+            tmp_path.replace(target)
+        except Exception:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
 
     def list_dir(self, relative_path: str = "", depth: int = 2) -> str:
         """List directory contents in tree format.
@@ -107,13 +120,15 @@ class StructuredMemoryStore:
         return self.resolve_path(relative_path).exists()
 
 
-# Global singleton
+# Global singleton with thread-safe initialization
 _store: StructuredMemoryStore | None = None
 
 
 def get_structured_memory_store() -> StructuredMemoryStore:
-    """Return the global StructuredMemoryStore singleton."""
+    """Return the global StructuredMemoryStore singleton (thread-safe)."""
     global _store
     if _store is None:
-        _store = StructuredMemoryStore()
+        with _lock:
+            if _store is None:
+                _store = StructuredMemoryStore()
     return _store
