@@ -88,16 +88,20 @@ def get_available_tools(
     structured_memory_config = getattr(config, "structured_memory", None)
     if getattr(structured_memory_config, "enabled", False):
         from deerflow.tools.builtins.structured_memory_tools import (
+            delete_memory_entity,
             get_memory_entity,
             list_memory_entities,
             search_structured_memory,
             update_memory_index,
+            write_memory_entity,
         )
 
         builtin_tools.extend([
             search_structured_memory,
             get_memory_entity,
             list_memory_entities,
+            write_memory_entity,
+            delete_memory_entity,
             update_memory_index,
         ])
         logger.info("Including structured memory tools")

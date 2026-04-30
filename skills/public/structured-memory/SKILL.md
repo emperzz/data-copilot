@@ -40,20 +40,24 @@ Do NOT create task memory for trivial one-shot questions or clarifications.
 
 1. Check the appropriate index file (`facts/schema/index.md` or
    `facts/business/index.md`) via `get_memory_entity`
-2. Write the entity detail file via `write_file` using the template below
-3. Add the entry to the index via `update_memory_index` with action="add"
+2. Write the entity detail file via `write_memory_entity` using the template below.
+   The index entry is updated automatically — no separate `update_memory_index` call needed.
 
 ### Adding a new task memory
 
-1. Write the task summary via `write_file` under `tasks/YYYY/task-title.md`
-2. Add the entry to `tasks/index.md` via `update_memory_index` with action="add"
+1. Write the task summary via `write_memory_entity` under `tasks/YYYY/task-title.md`.
+   The index entry is updated automatically.
 
 ### Updating existing memory
 
 1. Read the current file via `get_memory_entity`
-2. Edit via `str_replace` or `write_file`
-3. If the entity name or description changes, update the index via
-   `update_memory_index` with action="update"
+2. Edit the content and write back via `write_memory_entity`.
+   The old index entry is removed and the new one is added automatically.
+
+### Deleting memory
+
+1. Call `delete_memory_entity` with the entity path.
+   The corresponding index entry is removed automatically.
 
 ## Entity File Templates
 
@@ -130,6 +134,17 @@ All index files use this format:
 
 - [Entity Name](relative/path.md) — One-line description
 ```
+
+## Tools Reference
+
+| Tool | Purpose |
+|------|---------|
+| `search_structured_memory` | Search memory files by keyword |
+| `get_memory_entity` | Read full content of an entity file |
+| `list_memory_entities` | Browse the memory directory tree |
+| `write_memory_entity` | Create or update an entity file (index auto-updated) |
+| `delete_memory_entity` | Delete an entity file (index auto-updated) |
+| `update_memory_index` | Manually add/remove/update index entries (rarely needed) |
 
 ## Progressive Loading
 

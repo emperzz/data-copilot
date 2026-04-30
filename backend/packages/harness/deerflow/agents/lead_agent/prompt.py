@@ -620,8 +620,9 @@ Below is the enterprise structured memory index. This contains data warehouse
 metadata, business definitions, and task history the user has provided.
 Only the index is shown here — use `get_memory_entity` to load detailed
 entity files, `search_structured_memory` to find information by keyword,
-`list_memory_entities` to browse the directory, and `update_memory_index`
-to maintain index files.
+`list_memory_entities` to browse the directory, `write_memory_entity` to
+create or update entity files, `delete_memory_entity` to remove them, and
+`update_memory_index` to maintain index files.
 
 {content}
 </structured_memory>

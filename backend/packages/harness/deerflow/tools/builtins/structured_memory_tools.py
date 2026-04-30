@@ -8,7 +8,9 @@ from langchain.tools import tool
 from deerflow.structured_memory import (
     StructuredMemoryStore,
     get_structured_memory_store,
+    register_entity,
     search_memory_files,
+    unregister_entity,
 )
 
 logger = logging.getLogger(__name__)
@@ -170,3 +172,77 @@ def update_memory_index(
     except Exception as e:
         logger.exception("update_memory_index failed")
         return f"Failed to update index: {e}"
+
+
+@tool("write_memory_entity", parse_docstring=True)
+def write_memory_entity(
+    path: str,
+    content: str,
+) -> str:
+    """Write (create or update) a structured memory entity file.
+
+    Use this tool to create or update entity detail files in the structured
+    memory store. This writes to the actual structured memory store directory,
+    NOT the sandbox workspace. The corresponding index entry is updated
+    automatically.
+
+    Args:
+        path: Relative path within the memory store, e.g.
+            'facts/schema/tables/ods_order.md' or 'tasks/2026/sales-q1.md'.
+        content: The full markdown content for the memory entity file.
+            The first heading (line starting with #) becomes the index title,
+            and the description field (description label) becomes the index
+            description.
+
+    Returns:
+        Confirmation message with the path written and index update result.
+    """
+    try:
+        store = _get_store()
+        # Capture old content for update detection
+        old_content: str | None = None
+        try:
+            old_content = store.read_file(path)
+        except FileNotFoundError:
+            pass
+
+        store.write_file(path, content)
+        index_msg = register_entity(store, path, old_content, content)
+        return f"Memory entity written: {path} | {index_msg}"
+    except ValueError as e:
+        return f"Invalid path: {e}"
+    except Exception as e:
+        logger.exception("write_memory_entity failed")
+        return f"Failed to write memory entity: {e}"
+
+
+@tool("delete_memory_entity", parse_docstring=True)
+def delete_memory_entity(
+    path: str,
+) -> str:
+    """Delete a structured memory entity file.
+
+    Use this tool to remove an entity detail file from the structured memory
+    store. The corresponding index entry is removed automatically.
+
+    Args:
+        path: Relative path to the memory file to delete, e.g.
+            'facts/schema/tables/ods_order.md'.
+
+    Returns:
+        Confirmation message describing deletion and index cleanup.
+    """
+    try:
+        store = _get_store()
+        target = store.resolve_path(path)
+        if not target.exists():
+            return f"Memory entity not found: {path}"
+        content = target.read_text(encoding="utf-8")
+        target.unlink()
+        index_msg = unregister_entity(store, path, content)
+        return f"Memory entity deleted: {path} | {index_msg}"
+    except ValueError as e:
+        return f"Invalid path: {e}"
+    except Exception as e:
+        logger.exception("delete_memory_entity failed")
+        return f"Failed to delete memory entity: {e}"

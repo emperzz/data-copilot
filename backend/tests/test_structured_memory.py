@@ -196,7 +196,7 @@ class TestMemoryTemplates:
 
 
 class TestStructuredMemoryTools:
-    """Tests for the 4 built-in tools."""
+    """Tests for the 6 built-in tools."""
 
     def test_search_structured_memory_tool_exists(self):
         from deerflow.tools.builtins.structured_memory_tools import search_structured_memory
@@ -213,6 +213,14 @@ class TestStructuredMemoryTools:
     def test_update_memory_index_tool_exists(self):
         from deerflow.tools.builtins.structured_memory_tools import update_memory_index
         assert update_memory_index.name == "update_memory_index"
+
+    def test_write_memory_entity_tool_exists(self):
+        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+        assert write_memory_entity.name == "write_memory_entity"
+
+    def test_delete_memory_entity_tool_exists(self):
+        from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity
+        assert delete_memory_entity.name == "delete_memory_entity"
 
     def test_get_memory_entity_returns_not_found_for_missing_file(self, tmp_path):
         from deerflow.tools.builtins.structured_memory_tools import get_memory_entity
@@ -297,3 +305,286 @@ class TestStructuredMemoryTools:
                 "entry": "- [X](x.md) — desc",
             })
             assert "already exists" in result.lower()
+
+    def test_write_memory_entity_creates_file(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            content = "# ods_order\n\n## Info\n- db: ods"
+            result = write_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "content": content,
+            })
+            assert "written" in result.lower()
+            assert store.read_file("facts/schema/tables/ods_order.md") == content
+
+    def test_write_memory_entity_overwrites_existing(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.write_file("facts/schema/tables/ods_order.md", "old content")
+            result = write_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "content": "new content",
+            })
+            assert "written" in result.lower()
+            assert store.read_file("facts/schema/tables/ods_order.md") == "new content"
+
+    def test_write_memory_entity_rejects_traversal(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            result = write_memory_entity.invoke({
+                "path": "../etc/passwd",
+                "content": "malicious",
+            })
+            assert "invalid path" in result.lower()
+
+    def test_delete_memory_entity_removes_file(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.write_file("facts/schema/tables/ods_order.md", "content")
+            assert store.file_exists("facts/schema/tables/ods_order.md")
+
+            result = delete_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+            })
+            assert "deleted" in result.lower()
+            assert not store.file_exists("facts/schema/tables/ods_order.md")
+
+    def test_delete_memory_entity_not_found(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            result = delete_memory_entity.invoke({
+                "path": "nonexistent.md",
+            })
+            assert "not found" in result.lower()
+
+
+class TestIndexService:
+    """Tests for the auto-indexing index_service module."""
+
+    def test_get_index_path_tables(self):
+        from deerflow.structured_memory.index_service import get_index_path
+
+        assert get_index_path("facts/schema/tables/ods_order.md") == "facts/schema/index.md"
+        assert get_index_path("facts/schema/tables/dwd_trade.md") == "facts/schema/index.md"
+
+    def test_get_index_path_fields(self):
+        from deerflow.structured_memory.index_service import get_index_path
+
+        assert get_index_path("facts/schema/fields/common_metrics.md") == "facts/schema/index.md"
+
+    def test_get_index_path_business(self):
+        from deerflow.structured_memory.index_service import get_index_path
+
+        assert get_index_path("facts/business/revenue_def.md") == "facts/business/index.md"
+
+    def test_get_index_path_tasks(self):
+        from deerflow.structured_memory.index_service import get_index_path
+
+        assert get_index_path("tasks/2026/sales-q1.md") == "tasks/index.md"
+
+    def test_get_index_path_no_auto_index(self):
+        from deerflow.structured_memory.index_service import get_index_path
+
+        assert get_index_path("facts/index.md") is None
+        assert get_index_path("facts/schema/index.md") is None
+        assert get_index_path("README.md") is None
+
+    def test_parse_entity_entry_table(self):
+        from deerflow.structured_memory.index_service import parse_entity_entry
+
+        content = """# ods_order
+
+## 基本信息
+- **库**: ods
+- **表**: order
+- **描述**: 订单明细表
+"""
+        title, desc = parse_entity_entry(content)
+        assert title == "ods_order"
+        assert desc == "订单明细表"
+
+    def test_parse_entity_entry_task(self):
+        from deerflow.structured_memory.index_service import parse_entity_entry
+
+        content = """# Q1 Sales Analysis
+
+- **日期**: 2026-03-15
+- **类型**: analysis
+
+## 摘要
+分析了第一季度销售数据
+"""
+        title, desc = parse_entity_entry(content)
+        assert title == "Q1 Sales Analysis"
+        # Falls back to first non-heading line
+
+    def test_parse_entity_entry_no_title(self):
+        from deerflow.structured_memory.index_service import parse_entity_entry
+
+        title, desc = parse_entity_entry("No heading here")
+        assert title == ""
+        assert desc == ""
+
+    def test_build_index_entry_table(self):
+        from deerflow.structured_memory.index_service import build_index_entry
+
+        entry = build_index_entry(
+            "facts/schema/tables/ods_order.md",
+            "ods_order",
+            "订单明细表",
+        )
+        assert entry == "- [ods_order](tables/ods_order.md) — 订单明细表"
+
+    def test_build_index_entry_field(self):
+        from deerflow.structured_memory.index_service import build_index_entry
+
+        entry = build_index_entry(
+            "facts/schema/fields/common_metrics.md",
+            "common_metrics",
+            "通用指标定义",
+        )
+        assert entry == "- [common_metrics](fields/common_metrics.md) — 通用指标定义"
+
+    def test_build_index_entry_business(self):
+        from deerflow.structured_memory.index_service import build_index_entry
+
+        entry = build_index_entry(
+            "facts/business/revenue_def.md",
+            "收入确认",
+            "收入确认口径定义",
+        )
+        assert entry == "- [收入确认](revenue_def.md) — 收入确认口径定义"
+
+    def test_build_index_entry_task(self):
+        from deerflow.structured_memory.index_service import build_index_entry
+
+        entry = build_index_entry(
+            "tasks/2026/sales-q1.md",
+            "Q1 Sales Analysis",
+            "第一季度销售分析报告",
+        )
+        assert entry == "- [Q1 Sales Analysis](2026/sales-q1.md) — 第一季度销售分析报告"
+
+    def test_register_entity_creates_index_entry(self, tmp_path):
+        from deerflow.structured_memory.index_service import register_entity
+        from deerflow.structured_memory.storage import StructuredMemoryStore
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            content = """# ods_order
+
+## 基本信息
+- **描述**: 订单明细表
+"""
+            msg = register_entity(store, "facts/schema/tables/ods_order.md", None, content)
+            assert "ods_order" in msg
+            index_content = store.read_file("facts/schema/index.md")
+            assert "ods_order" in index_content
+
+    def test_register_entity_update_removes_old_entry(self, tmp_path):
+        from deerflow.structured_memory.index_service import register_entity
+        from deerflow.structured_memory.storage import StructuredMemoryStore
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            old_content = """# ods_order
+
+## 基本信息
+- **描述**: 旧描述
+"""
+            new_content = """# ods_order
+
+## 基本信息
+- **描述**: 新描述
+"""
+            # First: create
+            register_entity(store, "facts/schema/tables/ods_order.md", None, old_content)
+            # Second: update
+            msg = register_entity(store, "facts/schema/tables/ods_order.md", old_content, new_content)
+            index_content = store.read_file("facts/schema/index.md")
+            assert "新描述" in index_content
+            assert "旧描述" not in index_content
+
+    def test_register_entity_no_index_for_non_entity(self, tmp_path):
+        from deerflow.structured_memory.index_service import register_entity
+        from deerflow.structured_memory.storage import StructuredMemoryStore
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            msg = register_entity(store, "facts/index.md", None, "# Facts Index\n")
+            assert "No auto-indexing" in msg
+
+    def test_unregister_entity_removes_entry(self, tmp_path):
+        from deerflow.structured_memory.index_service import register_entity, unregister_entity
+        from deerflow.structured_memory.storage import StructuredMemoryStore
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            content = """# ods_order
+
+## 基本信息
+- **描述**: 订单明细表
+"""
+            register_entity(store, "facts/schema/tables/ods_order.md", None, content)
+            msg = unregister_entity(store, "facts/schema/tables/ods_order.md", content)
+            assert "Removed" in msg
+            index_content = store.read_file("facts/schema/index.md")
+            assert "ods_order" not in index_content
+
+    def test_write_memory_entity_auto_indexes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            content = """# ods_order
+
+## 基本信息
+- **描述**: 订单明细表
+"""
+            result = write_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "content": content,
+            })
+            assert "written" in result.lower()
+            assert "index" in result.lower()
+            assert store.file_exists("facts/schema/tables/ods_order.md")
+            index_content = store.read_file("facts/schema/index.md")
+            assert "ods_order" in index_content
+
+    def test_delete_memory_entity_auto_unindexes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity, write_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            content = """# ods_order
+
+## 基本信息
+- **描述**: 订单明细表
+"""
+            write_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "content": content,
+            })
+            result = delete_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+            })
+            assert "deleted" in result.lower()
+            assert "index" in result.lower()
+            assert not store.file_exists("facts/schema/tables/ods_order.md")
+            index_content = store.read_file("facts/schema/index.md")
+            assert "ods_order" not in index_content

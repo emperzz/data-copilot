@@ -1,5 +1,12 @@
 """Enterprise structured memory for data warehouse knowledge."""
 
+from deerflow.structured_memory.index_service import (
+    build_index_entry,
+    get_index_path,
+    parse_entity_entry,
+    register_entity,
+    unregister_entity,
+)
 from deerflow.structured_memory.storage import (
     StructuredMemoryStore,
     get_structured_memory_store,
@@ -22,6 +29,11 @@ __all__ = [
     "TASKS_INDEX_TEMPLATE",
     "TASK_SUMMARY_TEMPLATE",
     "StructuredMemoryStore",
+    "build_index_entry",
+    "get_index_path",
     "get_structured_memory_store",
+    "parse_entity_entry",
+    "register_entity",
     "search_memory_files",
+    "unregister_entity",
 ]
