@@ -7,7 +7,9 @@ from langchain.tools import tool
 
 from deerflow.structured_memory import (
     StructuredMemoryStore,
+    apply_partial_update,
     get_structured_memory_store,
+    parse_changes_json,
     register_entity,
     search_memory_files,
     unregister_entity,
@@ -178,21 +180,29 @@ def update_memory_index(
 def write_memory_entity(
     path: str,
     content: str,
+    changes: str = "",
+    timeline_desc: str = "",
 ) -> str:
-    """Write (create or update) a structured memory entity file.
+    """Write (create or partially update) a structured memory entity file.
 
     Use this tool to create or update entity detail files in the structured
     memory store. This writes to the actual structured memory store directory,
     NOT the sandbox workspace. The corresponding index entry is updated
     automatically.
 
+    For UPDATING an existing table entity, prefer using the `changes` and
+    `timeline_desc` parameters for partial updates -- only the specified
+    fields will be modified, unchanged fields are preserved, and a new
+    timeline entry is appended.
+
     Args:
-        path: Relative path within the memory store, e.g.
-            'facts/schema/tables/ods_order.md' or 'tasks/2026/sales-q1.md'.
-        content: The full markdown content for the memory entity file.
-            The first heading (line starting with #) becomes the index title,
-            and the description field (description label) becomes the index
-            description.
+        path: Relative path within the memory store
+        content: The full markdown content for initial creation, or complete
+            overwrite when changes is empty
+        changes: JSON dict of changed fields for partial update (e.g.
+            definition and columns). Only fields in this dict are modified.
+        timeline_desc: Description for the new timeline entry when using
+            partial update
 
     Returns:
         Confirmation message with the path written and index update result.
@@ -206,8 +216,19 @@ def write_memory_entity(
         except FileNotFoundError:
             pass
 
-        store.write_file(path, content)
-        index_msg = register_entity(store, path, old_content, content)
+        # Determine final content based on mode
+        final_content: str
+        changes_dict = parse_changes_json(changes)
+
+        if old_content and changes_dict:
+            # Partial update mode: merge only changed fields
+            final_content = apply_partial_update(old_content, changes_dict, timeline_desc)
+        else:
+            # Full write mode (initial creation or explicit overwrite)
+            final_content = content
+
+        store.write_file(path, final_content)
+        index_msg = register_entity(store, path, old_content, final_content)
         return f"Memory entity written: {path} | {index_msg}"
     except ValueError as e:
         return f"Invalid path: {e}"

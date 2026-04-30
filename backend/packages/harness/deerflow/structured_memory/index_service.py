@@ -57,7 +57,12 @@ def _extract_description(content: str, title: str) -> str:
       2. Look for '**类型**:' in task files
       3. Fall back to the first non-empty, non-heading line (max 80 chars)
     """
-    # Try **描述**: (table/business definition)
+    # Try **目的**: (new table format — best short description for index)
+    m = re.search(r"\*\*目的\*\*\s*:\s*(.+?)(?:\n|$)", content)
+    if m:
+        return m.group(1).strip()[:100]
+
+    # Try **描述**: (legacy table/business definition)
     m = re.search(r"\*\*描述\*\*\s*:\s*(.+?)(?:\n|$)", content)
     if m:
         return m.group(1).strip()[:100]

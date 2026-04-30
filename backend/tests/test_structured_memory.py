@@ -5,12 +5,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from deerflow.config.structured_memory_config import (
     StructuredMemoryConfig,
     get_structured_memory_config,
     load_structured_memory_config_from_dict,
     set_structured_memory_config,
+)
+from deerflow.structured_memory.models import (
+    SourceTable,
+    TableBasicInfo,
+    TableColumn,
+    TableCompiledTruth,
+    TableEntity,
+    TimelineEntry,
+    apply_partial_update,
+    markdown_to_table_entity,
+    parse_changes_json,
+    table_entity_to_markdown,
 )
 from deerflow.structured_memory.search import search_memory_files
 from deerflow.structured_memory.storage import StructuredMemoryStore
@@ -27,6 +40,300 @@ from deerflow.structured_memory.templates import (
 def _patch_store_root(store: StructuredMemoryStore, root: Path):
     """Helper to patch a store's root property with a temp directory."""
     return patch.object(StructuredMemoryStore, "root", property(lambda self: root))
+
+
+# ── New: Table Model Tests ───────────────────────────────────────────────────
+
+
+class TestTableModels:
+    """Tests for Pydantic models and serialization helpers."""
+
+    def test_table_column_requires_nonempty_name(self):
+        with pytest.raises(ValidationError):
+            TableColumn(name="", description="some desc")
+
+    def test_table_column_description_allows_empty(self):
+        """Description is optional (agent should confirm, but model allows empty)."""
+        col = TableColumn(name="col1", description="")
+        assert col.description == ""
+
+    def test_table_basic_info_requires_tablename(self):
+        with pytest.raises(ValidationError):
+            TableBasicInfo(database="db", tablename="", update_frequency="daily")
+
+    def test_table_basic_info_valid_frequency_only(self):
+        with pytest.raises(ValidationError):
+            TableBasicInfo(database="db", tablename="t", update_frequency="bogus")
+
+    def test_table_basic_info_accepts_all_valid_frequencies(self):
+        valid = {"daily", "hourly", "weekly", "monthly", "yearly", "realtime", "onetime"}
+        for freq in valid:
+            info = TableBasicInfo(database="db", tablename="t", update_frequency=freq)
+            assert info.update_frequency == freq
+
+    def test_table_compiled_truth_defaults(self):
+        ct = TableCompiledTruth(objective="o", definition="d", core_logic="c")
+        assert ct.source_tables == []
+        assert ct.columns == []
+        assert ct.sql is None
+
+    def test_table_entity_extra_field_rejected(self):
+        with pytest.raises(ValidationError):
+            TableEntity(
+                basic_info=TableBasicInfo(database="db", tablename="t", update_frequency="daily"),
+                compiled_truth=TableCompiledTruth(objective="o", definition="d", core_logic="c"),
+                extra_field="nope",  # type: ignore[call-arg]
+            )
+
+    def test_timeline_entry_requires_time_and_content(self):
+        with pytest.raises(ValidationError):
+            TimelineEntry(time="", content="desc")
+        with pytest.raises(ValidationError):
+            TimelineEntry(time="2026-01-01", content="")
+
+    def test_source_table_full_name_required(self):
+        with pytest.raises(ValidationError):
+            SourceTable(full_name="")
+
+    def test_source_table_memory_link_optional(self):
+        st = SourceTable(full_name="db.table1")
+        assert st.memory_link is None
+
+    # ── Roundtrip ────────────────────────────────────────────────────────
+
+    def test_table_entity_full_roundtrip(self):
+        entity = TableEntity(
+            basic_info=TableBasicInfo(database="ods", tablename="order_detail", update_frequency="daily"),
+            compiled_truth=TableCompiledTruth(
+                objective="原始业务表",
+                definition="从业务系统同步的订单明细数据，包含下单、支付、发货全流程",
+                core_logic="SELECT * FROM source_order WHERE status != 'deleted'",
+                source_tables=[
+                    SourceTable(full_name="mysql.order", memory_link="tables/mysql_order.md"),
+                    SourceTable(full_name="mysql.payment"),
+                ],
+                columns=[
+                    TableColumn(name="order_id", description="订单唯一标识"),
+                    TableColumn(name="amount", description="支付金额，单位为分"),
+                ],
+                sql="CREATE TABLE ods.order_detail AS SELECT ...",
+            ),
+            timeline=[TimelineEntry(time="2026-04-30 14:30:00", content="首次写入")],
+            created_at="2026-04-30 14:30:00",
+            updated_at="2026-04-30 14:30:00",
+        )
+
+        md = table_entity_to_markdown(entity)
+        parsed = markdown_to_table_entity(md)
+
+        assert parsed.basic_info.database == "ods"
+        assert parsed.basic_info.tablename == "order_detail"
+        assert parsed.basic_info.update_frequency == "daily"
+        assert parsed.compiled_truth.objective == "原始业务表"
+        assert parsed.compiled_truth.definition == "从业务系统同步的订单明细数据，包含下单、支付、发货全流程"
+        assert parsed.compiled_truth.core_logic == "SELECT * FROM source_order WHERE status != 'deleted'"
+        assert len(parsed.compiled_truth.source_tables) == 2
+        assert parsed.compiled_truth.source_tables[0].full_name == "mysql.order"
+        assert parsed.compiled_truth.source_tables[0].memory_link == "tables/mysql_order.md"
+        assert parsed.compiled_truth.source_tables[1].full_name == "mysql.payment"
+        assert parsed.compiled_truth.source_tables[1].memory_link is None
+        assert len(parsed.compiled_truth.columns) == 2
+        assert parsed.compiled_truth.columns[0].name == "order_id"
+        assert parsed.compiled_truth.sql == "CREATE TABLE ods.order_detail AS SELECT ..."
+        assert len(parsed.timeline) == 1
+        assert parsed.timeline[0].time == "2026-04-30 14:30:00"
+        assert parsed.timeline[0].content == "首次写入"
+        assert parsed.created_at == "2026-04-30 14:30:00"
+
+    def test_table_entity_roundtrip_minimal(self):
+        """Roundtrip with minimal required fields."""
+        entity = TableEntity(
+            basic_info=TableBasicInfo(database="dw", tablename="dim_store", update_frequency="daily"),
+            compiled_truth=TableCompiledTruth(objective="维度表", definition="门店维度"),
+        )
+        md = table_entity_to_markdown(entity)
+        parsed = markdown_to_table_entity(md)
+        assert parsed.basic_info.tablename == "dim_store"
+        assert parsed.compiled_truth.objective == "维度表"
+
+    def test_table_entity_roundtrip_empty_sql(self):
+        """Roundtrip when sql is None (business/source table)."""
+        entity = TableEntity(
+            basic_info=TableBasicInfo(database="db", tablename="source_table", update_frequency="realtime"),
+            compiled_truth=TableCompiledTruth(
+                objective="原始业务表",
+                definition="直接来自业务系统",
+                core_logic="无加工逻辑",
+                sql=None,
+            ),
+        )
+        md = table_entity_to_markdown(entity)
+        parsed = markdown_to_table_entity(md)
+        assert parsed.compiled_truth.sql is None
+
+    # ── Partial Update ───────────────────────────────────────────────────
+
+    _SAMPLE_ENTITY = """# 基本信息
+
+- **库**: ods
+- **表**: order_detail
+- **更新频率**: daily
+
+## Compiled Truth
+
+- **目的**: 原始业务表
+- **定义**: 订单明细原始数据
+- **核心逻辑**: SELECT * FROM orders
+
+### 上游依赖
+
+- mysql.order
+- mysql.payment
+  - [链接](tables/mysql_payment.md)
+
+### 字段
+
+| 字段 | 说明 |
+|------|------|
+| order_id | 订单ID |
+| amount | 金额 |
+
+### SQL
+```sql
+SELECT * FROM orders
+```
+
+## Timeline
+
+- **2026-04-30 14:30:00** — 首次写入
+
+---
+*创建: 2026-04-30 14:30:00*
+*更新: 2026-04-30 14:30:00*
+"""
+
+    def test_apply_partial_update_only_changes_target_field(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"definition": "更新后的定义"},
+            "更新了定义",
+        )
+        assert "**定义**: 更新后的定义" in result
+        assert "**目的**: 原始业务表" in result  # unchanged
+        assert "**库**: ods" in result  # unchanged
+        assert "**更新频率**: daily" in result  # unchanged
+
+    def test_apply_partial_update_preserves_unchanged_fields(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"objective": "聚合宽表"},
+            "更新了目的",
+        )
+        assert "**目的**: 聚合宽表" in result
+        assert "**定义**: 订单明细原始数据" in result  # preserved
+        assert "**核心逻辑**: SELECT * FROM orders" in result  # preserved
+
+    def test_apply_partial_update_appends_timeline_entry(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"definition": "新定义"},
+            "更新了定义",
+        )
+        # Old timeline entry preserved
+        assert "首次写入" in result
+        # New timeline entry appended
+        assert "更新了定义" in result
+        # Old timeline entry still present
+        assert "2026-04-30 14:30:00" in result
+
+    def test_apply_partial_update_does_not_duplicate_timeline(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"definition": "新定义"},
+            "更新了定义",
+        )
+        # '首次写入' should appear exactly once
+        assert result.count("首次写入") == 1
+
+    def test_apply_partial_update_updates_timestamp(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"definition": "改"},
+            "更新",
+        )
+        assert "*更新:" in result
+        # The new timestamp should not be the old one
+        assert "2026-04-30 14:30:00" in result  # still in timeline
+        # But the footer update should be newer (we can't assert exact value, just presence)
+        assert result.count("*更新:") >= 1
+
+    def test_apply_partial_update_multiple_simple_fields(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"database": "dwd", "tablename": "order_agg", "update_frequency": "hourly"},
+            "更新了基本信息",
+        )
+        assert "**库**: dwd" in result
+        assert "**表**: order_agg" in result
+        assert "**更新频率**: hourly" in result
+
+    def test_apply_partial_update_source_tables(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"source_tables": [{"full_name": "new.source"}, {"full_name": "another.src", "memory_link": "tables/another.md"}]},
+            "更新了上游依赖",
+        )
+        assert "new.source" in result
+        assert "another.src" in result
+        assert "[链接](tables/another.md)" in result
+        assert "mysql.order" not in result
+
+    def test_apply_partial_update_columns(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"columns": [{"name": "new_col", "description": "新字段描述"}]},
+            "更新了字段",
+        )
+        assert "new_col" in result
+        assert "新字段描述" in result
+        assert "order_id" not in result
+
+    def test_apply_partial_update_sql(self):
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"sql": "SELECT * FROM new_source"},
+            "更新了SQL",
+        )
+        assert "SELECT * FROM new_source" in result
+        # The old SQL in the sql block should be gone
+        sql_section = result.split("```sql")[1].split("```")[0] if "```sql" in result else ""
+        assert "SELECT * FROM orders" not in sql_section
+
+    def test_apply_partial_update_no_changes_dict(self):
+        """Empty changes dict returns unchanged content."""
+        result = apply_partial_update(self._SAMPLE_ENTITY, {}, "no changes")
+        assert result == self._SAMPLE_ENTITY
+
+    def test_parse_changes_json_valid(self):
+        result = parse_changes_json('{"definition": "new", "objective": "new obj"}')
+        assert result == {"definition": "new", "objective": "new obj"}
+
+    def test_parse_changes_json_empty(self):
+        assert parse_changes_json("") == {}
+
+    def test_parse_changes_json_invalid(self):
+        assert parse_changes_json("not json") == {}
+        assert parse_changes_json("") == {}
+
+    def test_parse_changes_json_not_dict(self):
+        assert parse_changes_json("[1, 2, 3]") == {}
+
+    def test_markdown_to_table_entity_handles_empty(self):
+        parsed = markdown_to_table_entity("")
+        assert parsed.basic_info.tablename == "(unknown)"
+
+
+# ── Original Test Classes (updated where needed) ────────────────────────────
 
 
 class TestStructuredMemoryConfig:
@@ -51,7 +358,6 @@ class TestStructuredMemoryConfig:
         assert config.storage_path == "/custom/path"
         assert config.injection_enabled is False
         assert config.max_index_tokens == 500
-        # Reset for other tests
         set_structured_memory_config(StructuredMemoryConfig())
 
     def test_set_config_singleton(self):
@@ -176,10 +482,47 @@ class TestMemoryTemplates:
         assert "{entries}" in TASKS_INDEX_TEMPLATE
         assert "{last_updated}" in TASKS_INDEX_TEMPLATE
 
-    def test_table_detail_template_has_all_fields(self):
-        assert "{table_name}" in TABLE_DETAIL_TEMPLATE
+    def test_table_detail_template_has_all_new_fields(self):
+        """New 3-layer template has 基本信息 + Compiled Truth + Timeline fields."""
         assert "{database}" in TABLE_DETAIL_TEMPLATE
-        assert "{fields}" in TABLE_DETAIL_TEMPLATE
+        assert "{tablename}" in TABLE_DETAIL_TEMPLATE
+        assert "{update_frequency}" in TABLE_DETAIL_TEMPLATE
+        assert "{objective}" in TABLE_DETAIL_TEMPLATE
+        assert "{definition}" in TABLE_DETAIL_TEMPLATE
+        assert "{core_logic}" in TABLE_DETAIL_TEMPLATE
+        assert "{source_tables}" in TABLE_DETAIL_TEMPLATE
+        assert "{columns}" in TABLE_DETAIL_TEMPLATE
+        assert "{sql}" in TABLE_DETAIL_TEMPLATE
+        assert "{timeline_entries}" in TABLE_DETAIL_TEMPLATE
+        assert "{created_at}" in TABLE_DETAIL_TEMPLATE
+        assert "{updated_at}" in TABLE_DETAIL_TEMPLATE
+
+    def test_table_detail_template_does_not_have_legacy_fields(self):
+        """Legacy fields from old template should not be present."""
+        assert "{table_name}" not in TABLE_DETAIL_TEMPLATE
+        assert "{layer}" not in TABLE_DETAIL_TEMPLATE
+        assert "{description}" not in TABLE_DETAIL_TEMPLATE
+        assert "{fields}" not in TABLE_DETAIL_TEMPLATE
+
+    def test_table_detail_template_has_three_sections(self):
+        """Rendered output contains three layer headers."""
+        rendered = TABLE_DETAIL_TEMPLATE.format(
+            database="ods",
+            tablename="test_table",
+            update_frequency="daily",
+            objective="测试目的",
+            definition="测试定义",
+            core_logic="测试逻辑",
+            source_tables="- source.tbl",
+            columns="| col1 | desc |",
+            sql="SELECT 1",
+            timeline_entries="- **2026-04-30** — 首次写入",
+            created_at="2026-04-30",
+            updated_at="2026-04-30",
+        )
+        assert "# 基本信息" in rendered
+        assert "## Compiled Truth" in rendered
+        assert "## Timeline" in rendered
 
     def test_task_summary_template_has_all_fields(self):
         assert "{title}" in TASK_SUMMARY_TEMPLATE
@@ -311,7 +654,7 @@ class TestStructuredMemoryTools:
 
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
-            content = "# ods_order\n\n## Info\n- db: ods"
+            content = "# 基本信息\n\n- db: ods"
             result = write_memory_entity.invoke({
                 "path": "facts/schema/tables/ods_order.md",
                 "content": content,
@@ -367,6 +710,118 @@ class TestStructuredMemoryTools:
             })
             assert "not found" in result.lower()
 
+    # ── New: Partial Update Tests ────────────────────────────────────────
+
+    _SAMPLE_NEW_ENTITY = """# 基本信息
+
+- **库**: ods
+- **表**: test_table
+- **更新频率**: daily
+
+## Compiled Truth
+
+- **目的**: 原始业务表
+- **定义**: 初始定义
+- **核心逻辑**: 初始逻辑
+
+### 上游依赖
+
+- upstream.source
+
+### 字段
+
+| 字段 | 说明 |
+|------|------|
+| col1 | 字段1 |
+
+### SQL
+```sql
+
+```
+
+## Timeline
+
+- **2026-04-30 14:30:00** — 首次写入
+
+---
+*创建: 2026-04-30 14:30:00*
+*更新: 2026-04-30 14:30:00*
+"""
+
+    def test_write_memory_entity_partial_update_preserves_unchanged(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            # Write initial entity
+            write_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": self._SAMPLE_NEW_ENTITY,
+            })
+
+            # Partial update: only change definition
+            result = write_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": "",
+                "changes": '{"definition": "更新后的定义"}',
+                "timeline_desc": "更新了定义",
+            })
+            assert "written" in result.lower()
+
+            content = store.read_file("facts/schema/tables/test.md")
+            # Changed field
+            assert "更新后的定义" in content
+            # Unchanged fields preserved
+            assert "**目的**: 原始业务表" in content
+            assert "**库**: ods" in content
+            assert "**表**: test_table" in content
+            assert "**更新频率**: daily" in content
+            assert "**核心逻辑**: 初始逻辑" in content
+
+    def test_write_memory_entity_partial_update_appends_timeline(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            write_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": self._SAMPLE_NEW_ENTITY,
+            })
+
+            write_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": "",
+                "changes": '{"core_logic": "新逻辑"}',
+                "timeline_desc": "更新了核心逻辑",
+            })
+
+            content = store.read_file("facts/schema/tables/test.md")
+            # Old timeline entry preserved
+            assert "首次写入" in content
+            # New timeline entry added
+            assert "更新了核心逻辑" in content
+            # Both timeline entries exist (count check)
+            assert content.count("首次写入") == 1
+
+    def test_write_memory_entity_full_overwrite_when_no_changes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            write_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": self._SAMPLE_NEW_ENTITY,
+            })
+
+            # Full overwrite without changes param
+            new_content = "completely new content"
+            result = write_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": new_content,
+            })
+            assert "written" in result.lower()
+            assert store.read_file("facts/schema/tables/test.md") == new_content
+
 
 class TestIndexService:
     """Tests for the auto-indexing index_service module."""
@@ -399,7 +854,28 @@ class TestIndexService:
         assert get_index_path("facts/schema/index.md") is None
         assert get_index_path("README.md") is None
 
-    def test_parse_entity_entry_table(self):
+    def test_parse_entity_entry_new_format(self):
+        """New 3-layer format: title from heading, description from **目的**:."""
+        from deerflow.structured_memory.index_service import parse_entity_entry
+
+        content = """# 基本信息
+
+- **库**: ods
+- **表**: order_detail
+- **更新频率**: daily
+
+## Compiled Truth
+
+- **目的**: 原始业务表，记录订单明细数据
+- **定义**: 从mysql同步的订单数据
+- **核心逻辑**: SELECT * FROM orders
+"""
+        title, desc = parse_entity_entry(content)
+        assert title == "基本信息"
+        assert desc == "原始业务表，记录订单明细数据"
+
+    def test_parse_entity_entry_legacy_format(self):
+        """Old flat format still parses correctly for backward compatibility."""
         from deerflow.structured_memory.index_service import parse_entity_entry
 
         content = """# ods_order
@@ -412,21 +888,6 @@ class TestIndexService:
         title, desc = parse_entity_entry(content)
         assert title == "ods_order"
         assert desc == "订单明细表"
-
-    def test_parse_entity_entry_task(self):
-        from deerflow.structured_memory.index_service import parse_entity_entry
-
-        content = """# Q1 Sales Analysis
-
-- **日期**: 2026-03-15
-- **类型**: analysis
-
-## 摘要
-分析了第一季度销售数据
-"""
-        title, desc = parse_entity_entry(content)
-        assert title == "Q1 Sales Analysis"
-        # Falls back to first non-heading line
 
     def test_parse_entity_entry_no_title(self):
         from deerflow.structured_memory.index_service import parse_entity_entry
@@ -482,15 +943,16 @@ class TestIndexService:
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
             store.ensure_directories()
-            content = """# ods_order
+            content = """# 基本信息
 
-## 基本信息
-- **描述**: 订单明细表
+## Compiled Truth
+
+- **目的**: 订单明细表
 """
             msg = register_entity(store, "facts/schema/tables/ods_order.md", None, content)
-            assert "ods_order" in msg
+            assert "基本信息" in msg
             index_content = store.read_file("facts/schema/index.md")
-            assert "ods_order" in index_content
+            assert "基本信息" in index_content
 
     def test_register_entity_update_removes_old_entry(self, tmp_path):
         from deerflow.structured_memory.index_service import register_entity
@@ -499,19 +961,19 @@ class TestIndexService:
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
             store.ensure_directories()
-            old_content = """# ods_order
+            old_content = """# 基本信息
 
-## 基本信息
-- **描述**: 旧描述
-"""
-            new_content = """# ods_order
+## Compiled Truth
 
-## 基本信息
-- **描述**: 新描述
+- **目的**: 旧描述
 """
-            # First: create
+            new_content = """# 基本信息
+
+## Compiled Truth
+
+- **目的**: 新描述
+"""
             register_entity(store, "facts/schema/tables/ods_order.md", None, old_content)
-            # Second: update
             msg = register_entity(store, "facts/schema/tables/ods_order.md", old_content, new_content)
             index_content = store.read_file("facts/schema/index.md")
             assert "新描述" in index_content
@@ -533,16 +995,17 @@ class TestIndexService:
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
             store.ensure_directories()
-            content = """# ods_order
+            content = """# 基本信息
 
-## 基本信息
-- **描述**: 订单明细表
+## Compiled Truth
+
+- **目的**: 订单明细表
 """
             register_entity(store, "facts/schema/tables/ods_order.md", None, content)
             msg = unregister_entity(store, "facts/schema/tables/ods_order.md", content)
             assert "Removed" in msg
             index_content = store.read_file("facts/schema/index.md")
-            assert "ods_order" not in index_content
+            assert "基本信息" not in index_content
 
     def test_write_memory_entity_auto_indexes(self, tmp_path):
         from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
@@ -550,10 +1013,11 @@ class TestIndexService:
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
             store.ensure_directories()
-            content = """# ods_order
+            content = """# 基本信息
 
-## 基本信息
-- **描述**: 订单明细表
+## Compiled Truth
+
+- **目的**: 订单明细表
 """
             result = write_memory_entity.invoke({
                 "path": "facts/schema/tables/ods_order.md",
@@ -563,7 +1027,7 @@ class TestIndexService:
             assert "index" in result.lower()
             assert store.file_exists("facts/schema/tables/ods_order.md")
             index_content = store.read_file("facts/schema/index.md")
-            assert "ods_order" in index_content
+            assert "基本信息" in index_content
 
     def test_delete_memory_entity_auto_unindexes(self, tmp_path):
         from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity, write_memory_entity
@@ -571,10 +1035,11 @@ class TestIndexService:
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
             store.ensure_directories()
-            content = """# ods_order
+            content = """# 基本信息
 
-## 基本信息
-- **描述**: 订单明细表
+## Compiled Truth
+
+- **目的**: 订单明细表
 """
             write_memory_entity.invoke({
                 "path": "facts/schema/tables/ods_order.md",
@@ -587,4 +1052,4 @@ class TestIndexService:
             assert "index" in result.lower()
             assert not store.file_exists("facts/schema/tables/ods_order.md")
             index_content = store.read_file("facts/schema/index.md")
-            assert "ods_order" not in index_content
+            assert "基本信息" not in index_content

@@ -54,6 +54,29 @@ Do NOT create task memory for trivial one-shot questions or clarifications.
 2. Edit the content and write back via `write_memory_entity`.
    The old index entry is removed and the new one is added automatically.
 
+**For table entities** (`facts/schema/tables/`), use partial updates to avoid
+replacing the entire file:
+
+1. Read the current content via `get_memory_entity`
+2. Identify **only the specific fields** that need changing in 基本信息 and
+   Compiled Truth. Do NOT modify fields that haven't changed.
+3. Provide the changed fields via the `changes` parameter as a JSON dict
+   (e.g. `{"definition": "new definition", "columns": [...]}`)
+4. Describe what changed via the `timeline_desc` parameter
+5. The tool will preserve all unchanged fields, append a new timeline entry,
+   and update the `*更新:*` timestamp automatically
+
+**Timeline is APPEND-ONLY** — never remove or edit existing timeline entries.
+They serve as an audit log of all changes.
+
+### Required and Uncertain Fields
+
+- **tablename** is REQUIRED and must never be empty
+- If the user does not provide a value for a required field (e.g., objective,
+  definition, update_frequency), ask the user for clarification — do NOT
+  default to empty strings or made-up values
+- For optional fields (e.g., sql, memory links), leave empty or omit when unknown
+
 ### Deleting memory
 
 1. Call `delete_memory_entity` with the entity path.
@@ -63,25 +86,47 @@ Do NOT create task memory for trivial one-shot questions or clarifications.
 
 ### Table detail (`facts/schema/tables/{table_name}.md`)
 
+Table entities use a 3-layer structure: 基本信息 (identifying attributes), Compiled Truth (curated definitive information), and Timeline (append-only audit log).
+
 ```markdown
-# {db}.{table} ({description})
+# 基本信息
 
-## 基本信息
-- 库: {database}
-- 表: {table}
-- 分层: {layer}
-- 更新频率: {frequency}
-- 主键: {pk}
+- **库**: {database}
+- **表**: {tablename}
+- **更新频率**: {update_frequency}   (daily/hourly/weekly/monthly/yearly/realtime/onetime)
 
-## 字段
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| ... | ... | ... |
+## Compiled Truth
 
-## 关联
-- 业务定义: [link](../business/xxx.md)
-- 下游表: [link](other_table.md)
-- 相关任务: [link](../../../tasks/YYYY/task.md)
+- **目的**: {objective}  — 表的目的：原始业务表/维度表/聚合宽表等
+- **定义**: {definition}  — 从哪里获取数据，如何计算，包含哪些字段，关键节点
+- **核心逻辑**: {core_logic}  — SQL处理后的核心逻辑摘要
+
+### 上游依赖
+
+- db.source_table1  — 简要说明
+- db.source_table2  — 简要说明
+  - [链接](tables/source_table2.md)  (如果该上游表有对应记忆)
+
+### 字段
+
+| 字段 | 说明 |
+|------|------|
+| field1 | 详细描述，包括定义模糊之处和特定计算条件 |
+| field2 | 详细描述 |
+
+### SQL
+```sql
+{original_sql_or_empty}
+```
+
+## Timeline
+
+- **2026-04-30 14:30:00** — 首次写入
+- **2026-05-01 09:00:00** — 更新了字段定义和上游依赖
+
+---
+*创建: 2026-04-30 14:30:00*
+*更新: 2026-05-01 09:00:00*
 ```
 
 ### Business definition (`facts/business/{name}.md`)
@@ -142,9 +187,9 @@ All index files use this format:
 | `search_structured_memory` | Search memory files by keyword |
 | `get_memory_entity` | Read full content of an entity file |
 | `list_memory_entities` | Browse the memory directory tree |
-| `write_memory_entity` | Create or update an entity file (index auto-updated) |
+| `write_memory_entity` | Create (with `content`) or partially update (with `changes` + `timeline_desc`) an entity file; index auto-updated |
 | `delete_memory_entity` | Delete an entity file (index auto-updated) |
-| `update_memory_index` | Manually add/remove/update index entries (rarely needed) |
+| `update_memory_index` | Manually add/remove/update index entries (rarely needed; write/delete handle this automatically) |
 
 ## Progressive Loading
 
