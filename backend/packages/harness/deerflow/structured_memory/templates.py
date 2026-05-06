@@ -28,26 +28,28 @@ SCHEMA_INDEX_TEMPLATE = """# Schema Index
 *最后更新: {last_updated}*
 """
 
-TABLE_DETAIL_TEMPLATE = """# 基本信息
+TABLE_DETAIL_TEMPLATE = """# {tablename}
 
-- **库**: {database}
-- **表**: {tablename}
-- **更新频率**: {update_frequency}
+## Basic Info
+
+- **database**: {database}
+- **table**: {tablename}
+- **update_frequency**: {update_frequency}
 
 ## Compiled Truth
 
-- **目的**: {objective}
-- **定义**: {definition}
-- **核心逻辑**: {core_logic}
+- **objective**: {objective}
+- **definition**: {definition}
+- **core_logic**: {core_logic}
 
-### 上游依赖
+### upstream dependencies
 
 {source_tables}
 
-### 字段
+### columns
 
-| 字段 | 说明 |
-|------|------|
+| column | description |
+|--------|-------------|
 {columns}
 
 ### SQL
@@ -60,8 +62,8 @@ TABLE_DETAIL_TEMPLATE = """# 基本信息
 {timeline_entries}
 
 ---
-*创建: {created_at}*
-*更新: {updated_at}*
+*created: {created_at}*
+*updated: {updated_at}*
 """
 
 BUSINESS_INDEX_TEMPLATE = """# Business Index

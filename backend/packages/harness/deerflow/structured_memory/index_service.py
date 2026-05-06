@@ -27,11 +27,13 @@ def get_index_path(entity_path: str) -> str | None:
 def parse_entity_entry(content: str) -> tuple[str, str]:
     """Extract (title, description) from an entity file's markdown content.
 
-    Title: first line matching '^#\\s+(.+)$' (the first markdown heading).
+    Title: for table entities (files under facts/schema/tables/), extracted from
+    '**table**:' field to avoid the generic '# Basic Info' heading.
+    For other entities: first line matching '^#\\s+(.+)$' (first markdown heading).
     Description heuristic:
-      - Table files: first '**描述**:' field value
+      - Table files: '**objective**:' field value
       - Task files: first non-empty line after the heading (up to 80 chars)
-      - Business files: first '**定义**:' or first line after heading
+      - Business files: '**definition**:' field value
       - Fallback: first non-empty, non-heading line (up to 80 chars)
     """
     lines = content.split("\n")
@@ -41,6 +43,11 @@ def parse_entity_entry(content: str) -> tuple[str, str]:
         if m:
             title = m.group(1).strip()
             break
+
+    # For table entities, try to extract table name from **table** field
+    table_m = re.search(r"^\s*-\s+\*\*table\*\*\s*:\s*(.+?)(?:\n|$)", content, re.MULTILINE)
+    if table_m:
+        title = table_m.group(1).strip()
 
     if not title:
         return "", ""
@@ -53,22 +60,17 @@ def _extract_description(content: str, title: str) -> str:
     """Extract a short description from entity content.
 
     Strategy:
-      1. Look for '**描述**:' in table/business files (literal '**描述**:' not '**描述:**')
-      2. Look for '**类型**:' in task files
+      1. Look for '**objective**:' in table/business files (best short description)
+      2. Look for '**definition**:' in business files
       3. Fall back to the first non-empty, non-heading line (max 80 chars)
     """
-    # Try **目的**: (new table format — best short description for index)
-    m = re.search(r"\*\*目的\*\*\s*:\s*(.+?)(?:\n|$)", content)
+    # Try **objective**: (best short description for index)
+    m = re.search(r"\*\*objective\*\*\s*:\s*(.+?)(?:\n|$)", content)
     if m:
         return m.group(1).strip()[:100]
 
-    # Try **描述**: (legacy table/business definition)
-    m = re.search(r"\*\*描述\*\*\s*:\s*(.+?)(?:\n|$)", content)
-    if m:
-        return m.group(1).strip()[:100]
-
-    # Try **定义**: (business definition)
-    m = re.search(r"\*\*定义\*\*\s*:\s*(.+?)(?:\n|$)", content)
+    # Try **definition**: (business definition)
+    m = re.search(r"\*\*definition\*\*\s*:\s*(.+?)(?:\n|$)", content)
     if m:
         return m.group(1).strip()[:100]
 
