@@ -24,6 +24,19 @@ def get_index_path(entity_path: str) -> str | None:
     return None
 
 
+def _search_field(text: str, *labels: str) -> str | None:
+    """Search for the first matching label variant and return its value.
+
+    Tries each label in order and returns the trimmed value of the first match.
+    Returns None if no label is found.
+    """
+    for label in labels:
+        m = re.search(rf"\*\*{re.escape(label)}\*\*\s*:\s*(.+?)(?:\n|$)", text)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
 def parse_entity_entry(content: str) -> tuple[str, str]:
     """Extract (title, description) from an entity file's markdown content.
 
@@ -31,9 +44,9 @@ def parse_entity_entry(content: str) -> tuple[str, str]:
     '**table**:' field to avoid the generic '# Basic Info' heading.
     For other entities: first line matching '^#\\s+(.+)$' (first markdown heading).
     Description heuristic:
-      - Table files: '**objective**:' field value
+      - Table files: '**objective**:' or '**目的**:' field value
       - Task files: first non-empty line after the heading (up to 80 chars)
-      - Business files: '**definition**:' field value
+      - Business files: '**definition**:' or '**定义**:' field value
       - Fallback: first non-empty, non-heading line (up to 80 chars)
     """
     lines = content.split("\n")
@@ -44,10 +57,10 @@ def parse_entity_entry(content: str) -> tuple[str, str]:
             title = m.group(1).strip()
             break
 
-    # For table entities, try to extract table name from **table** field
-    table_m = re.search(r"^\s*-\s+\*\*table\*\*\s*:\s*(.+?)(?:\n|$)", content, re.MULTILINE)
-    if table_m:
-        title = table_m.group(1).strip()
+    # For table entities, try to extract table name from **table**: / **表**:
+    table_val = _search_field(content, "table", "表")
+    if table_val:
+        title = table_val
 
     if not title:
         return "", ""
@@ -60,19 +73,19 @@ def _extract_description(content: str, title: str) -> str:
     """Extract a short description from entity content.
 
     Strategy:
-      1. Look for '**objective**:' in table/business files (best short description)
-      2. Look for '**definition**:' in business files
+      1. Look for '**objective**:' / '**目的**:' in table/business files
+      2. Look for '**definition**:' / '**定义**:' in business files
       3. Fall back to the first non-empty, non-heading line (max 80 chars)
     """
-    # Try **objective**: (best short description for index)
-    m = re.search(r"\*\*objective\*\*\s*:\s*(.+?)(?:\n|$)", content)
-    if m:
-        return m.group(1).strip()[:100]
+    # Try **objective** / **目的** (best short description for index)
+    val = _search_field(content, "objective", "目的")
+    if val:
+        return val[:100]
 
-    # Try **definition**: (business definition)
-    m = re.search(r"\*\*definition\*\*\s*:\s*(.+?)(?:\n|$)", content)
-    if m:
-        return m.group(1).strip()[:100]
+    # Try **definition** / **定义** (business definition)
+    val = _search_field(content, "definition", "定义")
+    if val:
+        return val[:100]
 
     # Fallback: first meaningful line after title
     lines = content.split("\n")

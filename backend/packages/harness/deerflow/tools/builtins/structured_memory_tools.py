@@ -201,6 +201,8 @@ def write_memory_entity(
             overwrite when changes is empty
         changes: JSON dict of changed fields for partial update (e.g.
             definition and columns). Only fields in this dict are modified.
+            Use ``column_updates`` (list of {name, description}) to update
+            individual column descriptions without replacing the full list.
         timeline_desc: Description for the new timeline entry when using
             partial update
 

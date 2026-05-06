@@ -348,7 +348,9 @@ def apply_partial_update(
         existing_markdown: The current full markdown content of the entity.
         changes: Dict mapping field names to new values. Supported keys:
             database, tablename, update_frequency (basic info),
-            objective, definition, core_logic, source_tables, columns, sql.
+            objective, definition, core_logic, source_tables, columns,
+            column_updates, sql. The columns key replaces all columns;
+            column_updates merges by matching column names.
         timeline_desc: Description for the new timeline entry (e.g. "updated definition").
 
     Returns:
@@ -400,6 +402,16 @@ def apply_partial_update(
                     ct.columns.append(TableColumn(**item))
                 elif isinstance(item, str):
                     ct.columns.append(TableColumn(name=item, description=""))
+
+    if "column_updates" in changes:
+        col_updates = changes["column_updates"]
+        if isinstance(col_updates, list):
+            updates_map = {item["name"]: item for item in col_updates if isinstance(item, dict) and "name" in item}
+            for col in ct.columns:
+                if col.name in updates_map:
+                    new_desc = updates_map[col.name].get("description")
+                    if new_desc is not None:
+                        col.description = new_desc
 
     if "sql" in changes:
         sql_val = changes["sql"]

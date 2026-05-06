@@ -300,6 +300,20 @@ SELECT * FROM orders
         assert "新字段描述" in result
         assert "order_id" not in result
 
+    def test_apply_partial_update_column_updates_merge(self):
+        """column_updates merges by name, preserving other columns."""
+        result = apply_partial_update(
+            self._SAMPLE_ENTITY,
+            {"column_updates": [{"name": "order_id", "description": "新的订单ID描述"}]},
+            "更新了 order_id 字段说明",
+        )
+        # order_id updated
+        assert "order_id" in result
+        assert "新的订单ID描述" in result
+        # amount preserved
+        assert "amount" in result
+        assert "金额" in result
+
     def test_apply_partial_update_sql(self):
         result = apply_partial_update(
             self._SAMPLE_ENTITY,
@@ -900,6 +914,25 @@ class TestIndexService:
         title, desc = parse_entity_entry("No heading here")
         assert title == ""
         assert desc == ""
+
+    def test_parse_entity_entry_chinese_labels(self):
+        """Chinese labels (**表**, **目的**, **定义**) are also recognized."""
+        from deerflow.structured_memory.index_service import parse_entity_entry
+
+        content = """# 基本信息
+
+- **库**: newretail
+- **表**: dim_upload_autolifemall_shop_pvid_supplement_is_online_union
+- **更新频率**: daily
+
+## Compiled Truth
+
+- **目的**: PVID 每日维度表，合并多个上传表供下游使用
+- **定义**: 人工维护的 PVID 维度表统一入口
+"""
+        title, desc = parse_entity_entry(content)
+        assert title == "dim_upload_autolifemall_shop_pvid_supplement_is_online_union"
+        assert desc == "PVID 每日维度表，合并多个上传表供下游使用"
 
     def test_build_index_entry_table(self):
         from deerflow.structured_memory.index_service import build_index_entry
