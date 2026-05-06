@@ -248,12 +248,24 @@ class RunJournal(BaseCallbackHandler):
         try:
             if isinstance(output, ToolMessage):
                 msg = cast(ToolMessage, output)
+                # Log the tool result content for debugging
+                logger.debug(
+                    "Tool end: tool_call_id=%s, content=%s",
+                    run_id,
+                    msg.content,
+                )
                 self._put(event_type="llm.tool.result", category="message", content=msg.model_dump())
             elif isinstance(output, Command):
                 cmd = cast(Command, output)
                 messages = cmd.update.get("messages", [])
                 for message in messages:
                     if isinstance(message, BaseMessage):
+                        logger.debug(
+                            "Tool end (Command): tool_call_id=%s, message_type=%s, content=%s",
+                            run_id,
+                            type(message).__name__,
+                            getattr(message, "content", None),
+                        )
                         self._put(event_type="llm.tool.result", category="message", content=message.model_dump())
                     else:
                         logger.warning(f"on_tool_end {run_id}: command update message is not BaseMessage: {type(message)}")
