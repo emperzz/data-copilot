@@ -234,7 +234,14 @@ class RunJournal(BaseCallbackHandler):
     def on_tool_start(self, serialized, input_str, *, run_id, parent_run_id=None, tags=None, metadata=None, inputs=None, **kwargs):
         """Handle tool start event, cache tool call ID for later correlation"""
         tool_call_id = str(run_id)
-        logger.debug("Tool start for node %s, tool_call_id=%s, tags=%s", run_id, tool_call_id, tags)
+        tool_name = serialized.get("name", "unknown") if serialized else "unknown"
+        logger.debug(
+            "Tool start: tool_name=%s, tool_call_id=%s, inputs=%s, tags=%s",
+            tool_name,
+            tool_call_id,
+            inputs,
+            tags,
+        )
 
     def on_tool_end(self, output, *, run_id, parent_run_id=None, **kwargs):
         """Handle tool end event, append message and clear node data"""
