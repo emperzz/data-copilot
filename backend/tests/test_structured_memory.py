@@ -896,6 +896,78 @@ class TestStructuredMemoryTools:
             index_content = store.read_file("facts/schema/index.md")
             assert "订单明细表" in index_content
 
+    def test_update_memory_entity_partial_update_preserves_unchanged(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity, update_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            initial = "# test_table\n\n## Basic Info\n\n- **database**: ods\n- **table**: test_table\n- **update_frequency**: daily\n\n## Compiled Truth\n\n- **objective**: 原始业务表\n- **definition**: 初始定义\n- **core_logic**: 初始逻辑\n\n### upstream dependencies\n\n- upstream.source\n\n### columns\n\n| column | description |\n|--------|-------------|\n| col1 | 字段1 |\n\n### SQL\n```sql\n\n```\n\n## Timeline\n\n- **2026-04-30 14:30:00** — 首次写入\n\n---\n*created: 2026-04-30 14:30:00*\n*updated: 2026-04-30 14:30:00*\n"
+            create_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": initial,
+            })
+
+            result = update_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "changes": '{"definition": "更新后的定义"}',
+                "timeline_desc": "更新了定义",
+            })
+            assert "written" in result.lower() or "updated" in result.lower()
+
+            content = store.read_file("facts/schema/tables/test.md")
+            assert "更新后的定义" in content
+            assert "**objective**: 原始业务表" in content
+            assert "**database**: ods" in content
+
+    def test_update_memory_entity_errors_if_not_found(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import update_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            result = update_memory_entity.invoke({
+                "path": "facts/schema/tables/nonexistent.md",
+                "changes": '{"definition": "new"}',
+                "timeline_desc": "desc",
+            })
+            assert "not found" in result.lower()
+            assert "create_memory_entity" in result
+
+    def test_update_memory_entity_requires_changes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity, update_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            create_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": "# test\n\n## Basic Info\n\n- **database**: ods",
+            })
+            result = update_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "changes": "",
+                "timeline_desc": "",
+            })
+            assert "changes" in result.lower()
+
+    def test_update_memory_entity_auto_indexes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity, update_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            create_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "content": "# ods_order\n\n## Basic Info\n\n- **database**: ods\n- **table**: ods_order\n- **update_frequency**: daily\n\n## Compiled Truth\n\n- **objective**: 订单明细表\n- **definition**: 初始定义",
+            })
+
+            result = update_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "changes": '{"definition": "从业务系统同步的订单明细数据"}',
+                "timeline_desc": "更新了定义",
+            })
+            assert "written" in result.lower() or "updated" in result.lower()
+            index_content = store.read_file("facts/schema/index.md")
+            assert "订单明细表" in index_content
+
 
 class TestIndexService:
     """Tests for the auto-indexing index_service module."""

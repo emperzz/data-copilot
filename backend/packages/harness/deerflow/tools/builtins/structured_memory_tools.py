@@ -269,6 +269,60 @@ def create_memory_entity(
         return f"Failed to create memory entity: {e}"
 
 
+@tool("update_memory_entity", parse_docstring=True)
+def update_memory_entity(
+    path: str,
+    changes: str,
+    timeline_desc: str = "",
+) -> str:
+    """Partially update an existing structured memory entity file.
+
+    Use this tool to update specific fields in an existing entity file.
+    Only the fields specified in the `changes` JSON dict will be modified;
+    all other fields are preserved. A new timeline entry is appended.
+
+    Args:
+        path: Relative path to the existing memory file, e.g.
+            'facts/schema/tables/ods_order.md'.
+        changes: JSON dict of changed fields. Only the specified fields
+            will be modified; all others are preserved.
+        timeline_desc: Description for the new timeline entry.
+
+    Returns:
+        Confirmation message with the path written and index update result.
+    """
+    try:
+        store = _get_store()
+        target = store.resolve_path(path)
+        lock_path = str(target) + ".lock"
+
+        lock_obj, _ = _acquire_entity_lock(lock_path)
+        try:
+            if not store.file_exists(path):
+                return (
+                    f"Memory entity not found: {path}. "
+                    "Use create_memory_entity to create new memories."
+                )
+
+            changes_dict = parse_changes_json(changes)
+            if not changes_dict:
+                return "Error: changes parameter is required for partial updates."
+
+            old_content = store.read_file(path)
+            final_content = apply_partial_update(old_content, changes_dict, timeline_desc)
+
+            store.write_file(path, final_content)
+            index_msg = register_entity(store, path, old_content, final_content)
+            return f"Memory entity written: {path} | {index_msg}"
+        finally:
+            _release_entity_lock(lock_obj, lock_path)
+    except ValueError as e:
+        return f"Invalid path: {e}"
+    except Exception as e:
+        logger.exception("update_memory_entity failed")
+        return f"Failed to update memory entity: {e}"
+
+
 @tool("write_memory_entity", parse_docstring=True)
 def write_memory_entity(
     path: str,
