@@ -194,7 +194,7 @@ All index files use this format:
 
 ## Progressive Loading
 
-1. Check the injected index in `<structured_memory>` for relevant entities
+1. Check the summary in `<structured_memory>` (only `core.md` content is injected into prompts)
 2. Use `search_structured_memory` to find information by keyword
 3. Use `get_memory_entity` to load full details when needed
 4. Use `list_memory_entities` to browse when exploring
