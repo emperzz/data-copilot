@@ -18,6 +18,12 @@ from deerflow.structured_memory.models import (
     markdown_to_table_entity,
     parse_changes_json,
     table_entity_to_markdown,
+    BusinessFieldEntry,
+    BusinessEntity,
+    apply_partial_update_for_business,
+    markdown_to_business_entity,
+    business_entity_to_markdown,
+    parse_business_changes_json,
 )
 from deerflow.structured_memory.storage import (
     StructuredMemoryStore,
@@ -25,6 +31,7 @@ from deerflow.structured_memory.storage import (
 )
 from deerflow.structured_memory.search import search_memory_files
 from deerflow.structured_memory.templates import (
+    BUSINESS_ENTITY_TEMPLATE,
     BUSINESS_INDEX_TEMPLATE,
     FACTS_INDEX_TEMPLATE,
     SCHEMA_INDEX_TEMPLATE,
@@ -34,6 +41,7 @@ from deerflow.structured_memory.templates import (
 )
 
 __all__ = [
+    "BUSINESS_ENTITY_TEMPLATE",
     "BUSINESS_INDEX_TEMPLATE",
     "CORE_MEMORY_FILENAME",
     "FACTS_INDEX_TEMPLATE",
@@ -41,6 +49,8 @@ __all__ = [
     "TABLE_DETAIL_TEMPLATE",
     "TASKS_INDEX_TEMPLATE",
     "TASK_SUMMARY_TEMPLATE",
+    "BusinessEntity",
+    "BusinessFieldEntry",
     "SourceTable",
     "StructuredMemoryStore",
     "TableBasicInfo",
@@ -49,10 +59,14 @@ __all__ = [
     "TableEntity",
     "TimelineEntry",
     "apply_partial_update",
+    "apply_partial_update_for_business",
     "build_index_entry",
+    "business_entity_to_markdown",
     "get_index_path",
     "get_structured_memory_store",
+    "markdown_to_business_entity",
     "markdown_to_table_entity",
+    "parse_business_changes_json",
     "parse_changes_json",
     "parse_entity_entry",
     "register_entity",

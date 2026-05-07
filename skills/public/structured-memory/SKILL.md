@@ -82,6 +82,21 @@ They serve as an audit log of all changes.
 1. Call `delete_memory_entity` with the entity path.
    The corresponding index entry is removed automatically.
 
+### Error Handling
+
+**Never use `write_file` to write directly into the structured memory directory.**
+
+If `update_memory_entity` fails:
+- `"not found"` → Use `create_memory_entity` to create the entity first, then retry
+- `"changes parameter is required"` → Provide a valid `changes` JSON dict
+- Other errors → Investigate the cause; do NOT bypass the tool by writing the file manually
+
+If `create_memory_entity` fails:
+- `"already exists"` → Entity already exists; use `update_memory_entity` instead
+- Other errors → Investigate the cause; do NOT write the file manually
+
+Writing directly with `write_file` bypasses the structured memory tool chain, skips index auto-update, and breaks the audit timeline. Always use the dedicated tools.
+
 ## Entity File Templates
 
 ### Table detail (`facts/schema/tables/{table_name}.md`)

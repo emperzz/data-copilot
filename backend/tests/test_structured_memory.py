@@ -22,10 +22,17 @@ from deerflow.structured_memory.models import (
     markdown_to_table_entity,
     parse_changes_json,
     table_entity_to_markdown,
+    BusinessFieldEntry,
+    BusinessEntity,
+    apply_partial_update_for_business,
+    markdown_to_business_entity,
+    business_entity_to_markdown,
+    parse_business_changes_json,
 )
 from deerflow.structured_memory.search import search_memory_files
 from deerflow.structured_memory.storage import StructuredMemoryStore
 from deerflow.structured_memory.templates import (
+    BUSINESS_ENTITY_TEMPLATE,
     BUSINESS_INDEX_TEMPLATE,
     FACTS_INDEX_TEMPLATE,
     SCHEMA_INDEX_TEMPLATE,
@@ -487,6 +494,273 @@ class TestSearchMemoryFiles:
         with _patch_store_root(store, tmp_path):
             results = search_memory_files("anything")
             assert "No memory files found" in results
+
+
+class TestBusinessEntityModels:
+    """Tests for BusinessEntity model and serialization."""
+
+    def test_business_field_entry_requires_name(self):
+        with pytest.raises(ValidationError):
+            BusinessFieldEntry(name="", value="some value")
+
+    def test_business_field_entry_allows_empty_value(self):
+        entry = BusinessFieldEntry(name="所属平台", value="", description="可选")
+        assert entry.name == "所属平台"
+        assert entry.value == ""
+
+    def test_business_entity_requires_title(self):
+        with pytest.raises(ValidationError):
+            BusinessEntity(title="")
+
+    def test_business_entity_all_fields_optional_except_title(self):
+        entity = BusinessEntity(title="测试业务")
+        assert entity.title == "测试业务"
+        assert entity.business_type == ""
+        assert entity.version == ""
+        assert entity.description == ""
+        assert entity.background == ""
+        assert entity.attributes == []
+        assert entity.list_attributes == {}
+        assert entity.related_entities == []
+
+    def test_business_entity_full_roundtrip(self):
+        entity = BusinessEntity(
+            title="汽车之家商城埋点系统",
+            business_type="C端电商",
+            version="v1.0",
+            description="商城C端用户行为埋点方案",
+            background="汽车之家商城是汽车之家新推出的电商业务",
+            attributes=[
+                BusinessFieldEntry(name="所属平台", value="汽车之家主站", description="主站平台"),
+                BusinessFieldEntry(name="数据仓库栏目", value="258/2377/2399", description="一级/二级/三级栏目ID"),
+            ],
+            list_attributes={
+                "核心业务目标": ["提高转化效率", "提升订单量"],
+                "支持平台": ["APP", "小程序", "PC", "M"],
+            },
+            related_entities=[
+                "facts/business/automall_event_naming_convention.md",
+                "facts/business/automall_parameter_specification.md",
+            ],
+            timeline=[TimelineEntry(time="2026-05-07 10:00:00", content="首次写入")],
+            created_at="2026-05-07 10:00:00",
+            updated_at="2026-05-07 10:00:00",
+        )
+        md = business_entity_to_markdown(entity)
+        parsed = markdown_to_business_entity(md)
+        assert parsed.title == "汽车之家商城埋点系统"
+        assert parsed.business_type == "C端电商"
+        assert parsed.version == "v1.0"
+        assert parsed.description == "商城C端用户行为埋点方案"
+        assert parsed.background == "汽车之家商城是汽车之家新推出的电商业务"
+        assert len(parsed.attributes) == 2
+        assert parsed.attributes[0].name == "所属平台"
+        assert parsed.attributes[0].value == "汽车之家主站"
+        assert "核心业务目标" in parsed.list_attributes
+        assert parsed.list_attributes["支持平台"] == ["APP", "小程序", "PC", "M"]
+        assert len(parsed.related_entities) == 2
+        assert "automall_event_naming" in parsed.related_entities[0]
+        assert len(parsed.timeline) == 1
+
+    def test_business_entity_roundtrip_minimal(self):
+        entity = BusinessEntity(title="最小业务实体")
+        md = business_entity_to_markdown(entity)
+        parsed = markdown_to_business_entity(md)
+        assert parsed.title == "最小业务实体"
+        assert parsed.attributes == []
+
+    def test_markdown_to_business_entity_handles_empty(self):
+        parsed = markdown_to_business_entity("")
+        assert parsed.title == "(unknown)"
+
+    def test_markdown_to_business_entity_handles_plain_content(self):
+        """Body without frontmatter falls back to regex extraction."""
+        content = """# 业务标题
+
+## 基本信息
+
+这是业务描述
+
+## 业务背景
+
+业务背景文本
+
+## 业务属性
+
+| attribute | value | description |
+|-----------|-------|-------------|
+| 平台 | web | web平台 |
+"""
+        parsed = markdown_to_business_entity(content)
+        assert parsed.title == "业务标题"
+        assert parsed.description == "这是业务描述"
+        assert parsed.background == "业务背景文本"
+        assert len(parsed.attributes) == 1
+        assert parsed.attributes[0].name == "平台"
+
+    def test_parse_business_changes_json_valid(self):
+        result = parse_business_changes_json('{"title": "新标题", "description": "新描述"}')
+        assert result == {"title": "新标题", "description": "新描述"}
+
+    def test_parse_business_changes_json_empty(self):
+        assert parse_business_changes_json("") == {}
+
+    def test_parse_business_changes_json_invalid(self):
+        assert parse_business_changes_json("not json") == {}
+        assert parse_business_changes_json("") == {}
+
+    # ── Partial Update ───────────────────────────────────────────
+
+    _SAMPLE_BUSINESS_ENTITY = """# 汽车之家商城埋点系统
+
+## 基本信息
+
+商城C端用户行为埋点方案
+
+## 业务背景
+
+汽车之家商城是汽车之家新推出的电商业务
+
+## 业务属性
+
+| attribute | value | description |
+|-----------|-------|-------------|
+| 所属平台 | 汽车之家主站 | 主站平台 |
+| 数据仓库栏目 | 258/2377/2399 | 一级/二级/三级栏目ID |
+
+## 核心要点
+
+### 核心业务目标
+
+- 提高转化效率
+- 提升订单量
+
+### 支持平台
+
+- APP
+- 小程序
+
+## 相关实体
+
+- [automall_event_naming_convention](./automall_event_naming_convention.md)
+- [automall_parameter_specification](./automall_parameter_specification.md)
+
+## Timeline
+
+- **2026-05-07 10:00:00** — 首次写入
+
+---
+*created: 2026-05-07 10:00:00*
+*updated: 2026-05-07 10:00:00*
+"""
+
+    def test_apply_partial_update_for_business_simple_field(self):
+        result = apply_partial_update_for_business(
+            self._SAMPLE_BUSINESS_ENTITY,
+            {"description": "更新后的描述"},
+            "更新了描述",
+        )
+        assert "更新后的描述" in result
+        assert "商城C端用户行为埋点方案" not in result
+
+    def test_apply_partial_update_for_business_preserves_unchanged(self):
+        result = apply_partial_update_for_business(
+            self._SAMPLE_BUSINESS_ENTITY,
+            {"title": "新系统标题"},
+            "更新标题",
+        )
+        assert "新系统标题" in result
+        assert "汽车之家商城" in result  # background preserved
+
+    def test_apply_partial_update_for_business_attributes(self):
+        result = apply_partial_update_for_business(
+            self._SAMPLE_BUSINESS_ENTITY,
+            {"attributes": [{"name": "新属性", "value": "新值"}]},
+            "更新属性",
+        )
+        assert "新属性" in result
+        assert "所属平台" not in result
+
+    def test_apply_partial_update_for_business_list_attributes(self):
+        result = apply_partial_update_for_business(
+            self._SAMPLE_BUSINESS_ENTITY,
+            {"list_attributes": {"支持平台": ["APP", "PC"]}},
+            "更新平台列表",
+        )
+        assert "APP" in result
+        assert "小程序" not in result
+
+    def test_apply_partial_update_for_business_appends_timeline(self):
+        result = apply_partial_update_for_business(
+            self._SAMPLE_BUSINESS_ENTITY,
+            {"description": "描述"},
+            "更新了描述",
+        )
+        assert "首次写入" in result
+        # New entry added
+        assert result.count("**2026-") == 2
+
+    def test_apply_partial_update_for_business_no_changes(self):
+        result = apply_partial_update_for_business(
+            self._SAMPLE_BUSINESS_ENTITY,
+            {},
+            "",
+        )
+        assert result == self._SAMPLE_BUSINESS_ENTITY
+
+    def test_update_memory_entity_routes_to_business_for_business_path(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity, update_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            initial = """# 测试业务
+
+## 基本信息
+
+测试描述
+
+## 业务背景
+
+背景文本
+
+## 业务属性
+
+| attribute | value | description |
+|-----------|-------|-------------|
+| 平台 | web | |
+
+## 核心要点
+
+### 目标
+
+- 目标A
+
+## 相关实体
+
+- (none)
+
+## Timeline
+
+- **2026-05-07 10:00:00** — 首次写入
+
+---
+*created: 2026-05-07 10:00:00*
+*updated: 2026-05-07 10:00:00*
+"""
+            create_memory_entity.invoke({
+                "path": "facts/business/test_biz.md",
+                "content": initial,
+            })
+            result = update_memory_entity.invoke({
+                "path": "facts/business/test_biz.md",
+                "changes": '{"description": "更新后的描述"}',
+                "timeline_desc": "更新描述",
+            })
+            assert "written" in result.lower() or "updated" in result.lower()
+            content = store.read_file("facts/business/test_biz.md")
+            assert "更新后的描述" in content
+            assert "测试描述" not in content
+            assert "背景文本" in content  # preserved
 
 
 class TestMemoryTemplates:

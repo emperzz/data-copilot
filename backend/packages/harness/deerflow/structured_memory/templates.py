@@ -110,3 +110,34 @@ TASK_SUMMARY_TEMPLATE = """# {title}
 
 *创建: {created_at}*
 """
+
+BUSINESS_ENTITY_TEMPLATE = """# {title}
+
+## 基本信息
+
+{description}
+
+## 业务背景
+
+{background}
+
+## 业务属性
+
+{attributes_block}
+
+## 核心要点
+
+{list_attributes_block}
+
+## 相关实体
+
+{related_entities_block}
+
+## Timeline
+
+{timeline_block}
+
+---
+*created: {created}*
+*updated: {updated}*
+"""

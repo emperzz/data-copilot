@@ -25,8 +25,10 @@ else:
 from deerflow.structured_memory import (
     StructuredMemoryStore,
     apply_partial_update,
+    apply_partial_update_for_business,
     get_structured_memory_store,
     parse_changes_json,
+    parse_business_changes_json,
     register_entity,
     search_memory_files,
     unregister_entity,
@@ -60,6 +62,32 @@ def _release_entity_lock(lock_obj, lock_path: str) -> None:
             os.unlink(lock_path)
         except OSError:
             pass
+
+
+def _parse_changes_for_path(changes_str: str, path: str) -> dict:
+    """Parse changes JSON using the appropriate parser based on entity type."""
+    if path.startswith("facts/schema/tables/") or path.startswith("facts/schema/fields/"):
+        return parse_changes_json(changes_str)
+    else:
+        return parse_business_changes_json(changes_str)
+
+
+def _apply_partial_update_for_path(
+    existing_markdown: str,
+    changes: dict,
+    timeline_desc: str,
+    path: str,
+) -> str:
+    """Route partial update to the correct handler based on entity type.
+
+    facts/schema/tables/* → TableEntity (apply_partial_update)
+    facts/business/*      → BusinessEntity (apply_partial_update_for_business)
+    others                → BusinessEntity (apply_partial_update_for_business, default)
+    """
+    if path.startswith("facts/schema/tables/") or path.startswith("facts/schema/fields/"):
+        return apply_partial_update(existing_markdown, changes, timeline_desc)
+    else:
+        return apply_partial_update_for_business(existing_markdown, changes, timeline_desc)
 
 
 @tool("search_structured_memory", parse_docstring=True)
@@ -304,12 +332,14 @@ def update_memory_entity(
                     "Use create_memory_entity to create new memories."
                 )
 
-            changes_dict = parse_changes_json(changes)
+            changes_dict = _parse_changes_for_path(changes, path)
             if not changes_dict:
                 return "Error: changes parameter is required for partial updates."
 
             old_content = store.read_file(path)
-            final_content = apply_partial_update(old_content, changes_dict, timeline_desc)
+            final_content = _apply_partial_update_for_path(
+                old_content, changes_dict, timeline_desc, path
+            )
 
             store.write_file(path, final_content)
             index_msg = register_entity(store, path, old_content, final_content)
