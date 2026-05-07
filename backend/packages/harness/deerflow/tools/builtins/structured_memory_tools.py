@@ -1,9 +1,25 @@
 """Built-in tools for enterprise structured memory management."""
 
 import logging
+import sys
 from typing import Literal
 
 from langchain.tools import tool
+
+# Platform detection for file locking
+if sys.platform != "win32":
+    import fcntl
+    _LOCK_AVAILABLE = True
+else:
+    _LOCK_AVAILABLE = False
+
+    class _NoOpLock:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def fileno(self):
+            return -1
 
 from deerflow.structured_memory import (
     StructuredMemoryStore,
@@ -22,6 +38,28 @@ def _get_store() -> StructuredMemoryStore:
     store = get_structured_memory_store()
     store.ensure_directories()
     return store
+
+
+def _acquire_entity_lock(lock_path: str) -> tuple:
+    """Acquire exclusive lock on entity file. Returns (lock_obj, lock_path)."""
+    if _LOCK_AVAILABLE:
+        lock_file = open(lock_path, 'w')
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        return lock_file, lock_path
+    else:
+        return _NoOpLock(), ""
+
+
+def _release_entity_lock(lock_obj, lock_path: str) -> None:
+    """Release exclusive lock and close file."""
+    if _LOCK_AVAILABLE:
+        fcntl.flock(lock_obj.fileno(), fcntl.LOCK_UN)
+        lock_obj.close()
+        import os
+        try:
+            os.unlink(lock_path)
+        except OSError:
+            pass
 
 
 @tool("search_structured_memory", parse_docstring=True)
@@ -211,27 +249,37 @@ def write_memory_entity(
     """
     try:
         store = _get_store()
-        # Capture old content for update detection
-        old_content: str | None = None
+        target = store.resolve_path(path)
+        lock_path = str(target) + ".lock"
+
+        lock_obj, _ = _acquire_entity_lock(lock_path)
         try:
-            old_content = store.read_file(path)
-        except FileNotFoundError:
-            pass
+            # Capture old content for update detection
+            old_content: str | None = None
+            try:
+                old_content = store.read_file(path)
+            except FileNotFoundError:
+                pass
 
-        # Determine final content based on mode
-        final_content: str
-        changes_dict = parse_changes_json(changes)
+            # Determine final content based on mode
+            final_content: str
+            changes_dict = parse_changes_json(changes)
 
-        if old_content and changes_dict:
-            # Partial update mode: merge only changed fields
-            final_content = apply_partial_update(old_content, changes_dict, timeline_desc)
-        else:
-            # Full write mode (initial creation or explicit overwrite)
-            final_content = content
+            if old_content and changes_dict:
+                # Partial update mode: merge only changed fields
+                final_content = apply_partial_update(old_content, changes_dict, timeline_desc)
+            else:
+                # Full write mode (initial creation or explicit overwrite)
+                final_content = content
 
-        store.write_file(path, final_content)
-        index_msg = register_entity(store, path, old_content, final_content)
-        return f"Memory entity written: {path} | {index_msg}"
+            if not final_content:
+                return "Error: content cannot be empty when creating a new entity. Use changes parameter for partial updates."
+
+            store.write_file(path, final_content)
+            index_msg = register_entity(store, path, old_content, final_content)
+            return f"Memory entity written: {path} | {index_msg}"
+        finally:
+            _release_entity_lock(lock_obj, lock_path)
     except ValueError as e:
         return f"Invalid path: {e}"
     except Exception as e:
@@ -260,10 +308,16 @@ def delete_memory_entity(
         target = store.resolve_path(path)
         if not target.exists():
             return f"Memory entity not found: {path}"
-        content = target.read_text(encoding="utf-8")
-        target.unlink()
-        index_msg = unregister_entity(store, path, content)
-        return f"Memory entity deleted: {path} | {index_msg}"
+
+        lock_path = str(target) + ".lock"
+        lock_obj, _ = _acquire_entity_lock(lock_path)
+        try:
+            content = target.read_text(encoding="utf-8")
+            target.unlink()
+            index_msg = unregister_entity(store, path, content)
+            return f"Memory entity deleted: {path} | {index_msg}"
+        finally:
+            _release_entity_lock(lock_obj, lock_path)
     except ValueError as e:
         return f"Invalid path: {e}"
     except Exception as e:
