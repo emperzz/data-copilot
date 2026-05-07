@@ -697,23 +697,32 @@ class TestStructuredMemoryTools:
                         assert "facts/index.md" not in result
                         assert "tasks/index.md" not in result
 
-    def test_get_structured_memory_context_core_not_found(self, tmp_path):
-        """Should return fallback message when core.md does not exist."""
+    def test_get_structured_memory_context_core_not_found_creates_template(self, tmp_path):
+        """Should create core.md with template when it does not exist."""
         from deerflow.config.structured_memory_config import StructuredMemoryConfig
+        from deerflow.structured_memory import CORE_MEMORY_FILENAME
         from deerflow.agents.lead_agent.prompt import _get_structured_memory_context
+        from unittest.mock import patch
 
         with patch("deerflow.structured_memory.storage._store", None):
             with patch("deerflow.config.structured_memory_config.get_structured_memory_config") as mock_config:
                 mock_config.return_value = StructuredMemoryConfig(enabled=True, injection_enabled=True)
-                with patch("deerflow.structured_memory.storage.get_structured_memory_store") as mock_get_store:
+                with patch("deerflow.structured_memory.storage.get_structured_memory_store") as mock_store:
                     store = StructuredMemoryStore()
                     with _patch_store_root(store, tmp_path):
                         store.ensure_directories()
-                        mock_get_store.return_value = store
+                        mock_store.return_value = store
 
                         result = _get_structured_memory_context()
 
-                        assert "No core memory yet" in result
+                        # Should NOT show fallback message
+                        assert "No core memory yet" not in result
+                        # Should show template content
+                        assert "# Core Memory" in result
+                        assert "已处理领域" in result
+                        assert "关键事实摘要" in result
+                        # Should have created the file
+                        assert store.file_exists(CORE_MEMORY_FILENAME)
 
     def test_delete_memory_entity_removes_file(self, tmp_path):
         from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity

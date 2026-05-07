@@ -600,6 +600,7 @@ def _get_structured_memory_context() -> str:
 
     Injects only the core.md top-level summary file, not the index files.
     Agent uses search/list tools to browse detailed entities on demand.
+    If core.md doesn't exist, creates it with an initial template.
 
     Returns:
         Formatted structured memory context wrapped in XML tags, or empty string.
@@ -616,14 +617,26 @@ def _get_structured_memory_context() -> str:
         store = get_structured_memory_store()
         store.ensure_directories()
 
-        # Read core.md only
+        # Read core.md - create with template if not exists
         try:
             core_content = store.read_file(CORE_MEMORY_FILENAME)
         except FileNotFoundError:
-            core_content = (
-                "(No core memory yet. Use create_memory_entity to build domain summaries. "
-                "Use search_structured_memory and list_memory_entities to explore existing memory.)"
-            )
+            # Auto-create with initial template
+            from datetime import datetime
+            now = datetime.now().strftime("%Y-%m-%d")
+            template = f"""# Core Memory
+
+## 已处理领域
+（暂无）
+
+## 关键事实摘要
+（暂无）
+
+## 最后更新时间
+{now}
+"""
+            store.write_file(CORE_MEMORY_FILENAME, template)
+            core_content = template
 
         content = core_content
         if not content.strip():
