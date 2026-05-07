@@ -29,22 +29,9 @@ class StructuredMemoryConfig(BaseModel):
     )
 
 
-# Global singleton
-_structured_memory_config: StructuredMemoryConfig = StructuredMemoryConfig()
-
-
 def get_structured_memory_config() -> StructuredMemoryConfig:
-    """Get the current structured memory configuration."""
-    return _structured_memory_config
+    """Get the current structured memory configuration from AppConfig."""
+    from deerflow.config import get_app_config
 
-
-def set_structured_memory_config(config: StructuredMemoryConfig) -> None:
-    """Set the structured memory configuration (for testing)."""
-    global _structured_memory_config
-    _structured_memory_config = config
-
-
-def load_structured_memory_config_from_dict(config_dict: dict) -> None:
-    """Load structured memory configuration from a dictionary."""
-    global _structured_memory_config
-    _structured_memory_config = StructuredMemoryConfig(**config_dict)
+    app_config = get_app_config()
+    return getattr(app_config, "structured_memory", StructuredMemoryConfig())

@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -10,8 +10,6 @@ from pydantic import ValidationError
 from deerflow.config.structured_memory_config import (
     StructuredMemoryConfig,
     get_structured_memory_config,
-    load_structured_memory_config_from_dict,
-    set_structured_memory_config,
 )
 from deerflow.structured_memory.models import (
     SourceTable,
@@ -362,25 +360,28 @@ class TestStructuredMemoryConfig:
         assert config.max_index_tokens == 1500
         assert config.storage_path == ""
 
-    def test_load_config_from_dict(self):
-        load_structured_memory_config_from_dict({
-            "enabled": True,
-            "storage_path": "/custom/path",
-            "injection_enabled": False,
-            "max_index_tokens": 500,
-        })
-        config = get_structured_memory_config()
-        assert config.enabled is True
-        assert config.storage_path == "/custom/path"
-        assert config.injection_enabled is False
-        assert config.max_index_tokens == 500
-        set_structured_memory_config(StructuredMemoryConfig())
+    def test_get_config_from_app_config_with_custom_values(self):
+        """get_structured_memory_config reads from AppConfig.structured_memory."""
+        mock_app_config = MagicMock()
+        mock_app_config.structured_memory = StructuredMemoryConfig(
+            enabled=True,
+            storage_path="/custom/path",
+            injection_enabled=False,
+            max_index_tokens=500,
+        )
+        with patch("deerflow.config.get_app_config", return_value=mock_app_config):
+            config = get_structured_memory_config()
+            assert config.enabled is True
+            assert config.storage_path == "/custom/path"
+            assert config.injection_enabled is False
+            assert config.max_index_tokens == 500
 
-    def test_set_config_singleton(self):
-        custom = StructuredMemoryConfig(enabled=True, max_index_tokens=3000)
-        set_structured_memory_config(custom)
-        assert get_structured_memory_config().max_index_tokens == 3000
-        set_structured_memory_config(StructuredMemoryConfig())
+    def test_get_config_from_app_config_returns_default_when_missing(self):
+        """Returns default StructuredMemoryConfig when AppConfig has no structured_memory attr."""
+        mock_app_config = MagicMock(spec=[])  # spec=[] means no attributes allowed
+        with patch("deerflow.config.get_app_config", return_value=mock_app_config):
+            config = get_structured_memory_config()
+            assert config.enabled is False
 
 
 class TestStructuredMemoryStore:
