@@ -596,16 +596,17 @@ def _get_memory_context(agent_name: str | None = None, *, app_config: AppConfig 
 
 
 def _get_structured_memory_context() -> str:
-    """Get structured memory index for injection into system prompt.
+    """Get structured memory core summary for injection into system prompt.
 
-    Injects only the top-level indexes (facts/index.md and tasks/index.md),
-    not the full entity details. Agent loads details on demand via tools.
+    Injects only the core.md top-level summary file, not the index files.
+    Agent uses search/list tools to browse detailed entities on demand.
 
     Returns:
         Formatted structured memory context wrapped in XML tags, or empty string.
     """
     try:
         from deerflow.config.structured_memory_config import get_structured_memory_config
+        from deerflow.structured_memory import CORE_MEMORY_FILENAME
         from deerflow.structured_memory.storage import get_structured_memory_store
 
         config = get_structured_memory_config()
@@ -615,41 +616,27 @@ def _get_structured_memory_context() -> str:
         store = get_structured_memory_store()
         store.ensure_directories()
 
-        sections: list[str] = []
-
-        # Read facts index
+        # Read core.md only
         try:
-            facts_index = store.read_file("facts/index.md")
-            max_chars = config.max_index_tokens * 3  # rough char estimate
-            if len(facts_index) > max_chars:
-                facts_index = facts_index[:max_chars] + "\n\n... (truncated, use tools for full index)"
-            sections.append(facts_index)
+            core_content = store.read_file(CORE_MEMORY_FILENAME)
         except FileNotFoundError:
-            sections.append("(No facts memory yet. Use `update_memory_index` and `write_file` to add.)")
+            core_content = (
+                "(No core memory yet. Use create_memory_entity to build domain summaries. "
+                "Use search_structured_memory and list_memory_entities to explore existing memory.)"
+            )
 
-        # Read tasks index
-        try:
-            tasks_index = store.read_file("tasks/index.md")
-            max_chars = config.max_index_tokens * 2
-            if len(tasks_index) > max_chars:
-                tasks_index = tasks_index[:max_chars] + "\n\n... (truncated, use tools for full index)"
-            sections.append(tasks_index)
-        except FileNotFoundError:
-            sections.append("(No task memory yet.)")
-
-        content = "\n\n".join(sections)
+        content = core_content
         if not content.strip():
             return ""
 
         return f"""<structured_memory>
-Below is the enterprise structured memory index. This contains data warehouse
-metadata, business definitions, and task history the user has provided.
-Only the index is shown here — use `get_memory_entity` to load detailed
-entity files, `search_structured_memory` to find information by keyword,
-`list_memory_entities` to browse the directory, `create_memory_entity` to
-create new entity files, `update_memory_entity` to update existing files,
-`delete_memory_entity` to remove them, and `update_memory_index` to maintain
-index files.
+Below is the enterprise structured memory core summary. This contains domain-level
+summaries of data warehouse metadata, business definitions, and task history.
+Only the core summary is shown here — use `search_structured_memory` to find specific
+information by keyword, `list_memory_entities` to browse the directory structure,
+`get_memory_entity` to load detailed entity files, `create_memory_entity` to create
+new entity files, `update_memory_entity` to update existing files, and
+`delete_memory_entity` to remove them.
 
 {content}
 </structured_memory>
