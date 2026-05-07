@@ -35,6 +35,7 @@ from deerflow.structured_memory.templates import (
 
 __all__ = [
     "BUSINESS_INDEX_TEMPLATE",
+    "CORE_MEMORY_FILENAME",
     "FACTS_INDEX_TEMPLATE",
     "SCHEMA_INDEX_TEMPLATE",
     "TABLE_DETAIL_TEMPLATE",
@@ -59,3 +60,5 @@ __all__ = [
     "table_entity_to_markdown",
     "unregister_entity",
 ]
+
+CORE_MEMORY_FILENAME = "core.md"
