@@ -1,6 +1,7 @@
 """Built-in tools for enterprise structured memory management."""
 
 import logging
+import os
 import sys
 from typing import Literal
 
@@ -55,7 +56,6 @@ def _release_entity_lock(lock_obj, lock_path: str) -> None:
     if _LOCK_AVAILABLE:
         fcntl.flock(lock_obj.fileno(), fcntl.LOCK_UN)
         lock_obj.close()
-        import os
         try:
             os.unlink(lock_path)
         except OSError:
@@ -167,48 +167,55 @@ def update_memory_index(
     """
     try:
         store = _get_store()
+        index_target = store.resolve_path(index_path)
+        lock_path = str(index_target) + ".lock"
 
-        if not store.file_exists(index_path):
+        lock_obj, _ = _acquire_entity_lock(lock_path)
+        try:
+            if not store.file_exists(index_path):
+                if action == "add":
+                    store.write_file(index_path, f"# Index\n\n{entry}\n")
+                    return f"Created {index_path} with entry: {entry}"
+                return f"Index file not found: {index_path}"
+
+            content = store.read_file(index_path)
+            lines = content.rstrip("\n").split("\n")
+
             if action == "add":
-                store.write_file(index_path, f"# Index\n\n{entry}\n")
-                return f"Created {index_path} with entry: {entry}"
-            return f"Index file not found: {index_path}"
+                if entry.strip() in content:
+                    return f"Entry already exists in {index_path}: {entry}"
+                new_content = content.rstrip("\n") + "\n" + entry + "\n"
+                store.write_file(index_path, new_content)
+                return f"Added to {index_path}: {entry}"
 
-        content = store.read_file(index_path)
-        lines = content.rstrip("\n").split("\n")
+            elif action == "remove":
+                if not target:
+                    return "The 'target' parameter is required for 'remove' action."
+                new_lines = [l for l in lines if target.strip() not in l]
+                if len(new_lines) == len(lines):
+                    return f"Target not found in {index_path}: {target}"
+                store.write_file(index_path, "\n".join(new_lines) + "\n")
+                return f"Removed from {index_path}: {target}"
 
-        if action == "add":
-            if entry.strip() in content:
-                return f"Entry already exists in {index_path}: {entry}"
-            new_content = content.rstrip("\n") + "\n" + entry + "\n"
-            store.write_file(index_path, new_content)
-            return f"Added to {index_path}: {entry}"
+            elif action == "update":
+                if not target:
+                    return "The 'target' parameter is required for 'update' action."
+                found = False
+                for i, line in enumerate(lines):
+                    if target.strip() in line:
+                        lines[i] = entry
+                        found = True
+                        break
+                if not found:
+                    return f"Target not found in {index_path}: {target}"
+                store.write_file(index_path, "\n".join(lines) + "\n")
+                return f"Updated {index_path}: replaced '{target.strip()}' with '{entry}'"
 
-        elif action == "remove":
-            if not target:
-                return "The 'target' parameter is required for 'remove' action."
-            new_lines = [l for l in lines if target.strip() not in l]
-            if len(new_lines) == len(lines):
-                return f"Target not found in {index_path}: {target}"
-            store.write_file(index_path, "\n".join(new_lines) + "\n")
-            return f"Removed from {index_path}: {target}"
-
-        elif action == "update":
-            if not target:
-                return "The 'target' parameter is required for 'update' action."
-            found = False
-            for i, line in enumerate(lines):
-                if target.strip() in line:
-                    lines[i] = entry
-                    found = True
-                    break
-            if not found:
-                return f"Target not found in {index_path}: {target}"
-            store.write_file(index_path, "\n".join(lines) + "\n")
-            return f"Updated {index_path}: replaced '{target.strip()}' with '{entry}'"
-
-        return f"Unknown action: {action}"
-
+            return f"Unknown action: {action}"
+        finally:
+            _release_entity_lock(lock_obj, lock_path)
+    except ValueError as e:
+        return f"Invalid path: {e}"
     except Exception as e:
         logger.exception("update_memory_index failed")
         return f"Failed to update index: {e}"
@@ -306,12 +313,13 @@ def delete_memory_entity(
     try:
         store = _get_store()
         target = store.resolve_path(path)
-        if not target.exists():
-            return f"Memory entity not found: {path}"
 
         lock_path = str(target) + ".lock"
         lock_obj, _ = _acquire_entity_lock(lock_path)
         try:
+            if not target.exists():
+                return f"Memory entity not found: {path}"
+
             content = target.read_text(encoding="utf-8")
             target.unlink()
             index_msg = unregister_entity(store, path, content)
