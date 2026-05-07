@@ -269,35 +269,24 @@ def create_memory_entity(
         return f"Failed to create memory entity: {e}"
 
 
-@tool("write_memory_entity", parse_docstring=True)
-def write_memory_entity(
+@tool("update_memory_entity", parse_docstring=True)
+def update_memory_entity(
     path: str,
-    content: str,
-    changes: str = "",
+    changes: str,
     timeline_desc: str = "",
 ) -> str:
-    """Write (create or partially update) a structured memory entity file.
+    """Partially update an existing structured memory entity file.
 
-    Use this tool to create or update entity detail files in the structured
-    memory store. This writes to the actual structured memory store directory,
-    NOT the sandbox workspace. The corresponding index entry is updated
-    automatically.
-
-    For UPDATING an existing table entity, prefer using the `changes` and
-    `timeline_desc` parameters for partial updates -- only the specified
-    fields will be modified, unchanged fields are preserved, and a new
-    timeline entry is appended.
+    Use this tool to update specific fields in an existing entity file.
+    Only the fields specified in the `changes` JSON dict will be modified;
+    all other fields are preserved. A new timeline entry is appended.
 
     Args:
-        path: Relative path within the memory store
-        content: The full markdown content for initial creation, or complete
-            overwrite when changes is empty
-        changes: JSON dict of changed fields for partial update (e.g.
-            definition and columns). Only fields in this dict are modified.
-            Use ``column_updates`` (list of {name, description}) to update
-            individual column descriptions without replacing the full list.
-        timeline_desc: Description for the new timeline entry when using
-            partial update
+        path: Relative path to the existing memory file, e.g.
+            'facts/schema/tables/ods_order.md'.
+        changes: JSON dict of changed fields. Only the specified fields
+            will be modified; all others are preserved.
+        timeline_desc: Description for the new timeline entry.
 
     Returns:
         Confirmation message with the path written and index update result.
@@ -309,26 +298,18 @@ def write_memory_entity(
 
         lock_obj, _ = _acquire_entity_lock(lock_path)
         try:
-            # Capture old content for update detection
-            old_content: str | None = None
-            try:
-                old_content = store.read_file(path)
-            except FileNotFoundError:
-                pass
+            if not store.file_exists(path):
+                return (
+                    f"Memory entity not found: {path}. "
+                    "Use create_memory_entity to create new memories."
+                )
 
-            # Determine final content based on mode
-            final_content: str
             changes_dict = parse_changes_json(changes)
+            if not changes_dict:
+                return "Error: changes parameter is required for partial updates."
 
-            if old_content and changes_dict:
-                # Partial update mode: merge only changed fields
-                final_content = apply_partial_update(old_content, changes_dict, timeline_desc)
-            else:
-                # Full write mode (initial creation or explicit overwrite)
-                final_content = content
-
-            if not final_content:
-                return "Error: content cannot be empty when creating a new entity. Use changes parameter for partial updates."
+            old_content = store.read_file(path)
+            final_content = apply_partial_update(old_content, changes_dict, timeline_desc)
 
             store.write_file(path, final_content)
             index_msg = register_entity(store, path, old_content, final_content)
@@ -338,8 +319,8 @@ def write_memory_entity(
     except ValueError as e:
         return f"Invalid path: {e}"
     except Exception as e:
-        logger.exception("write_memory_entity failed")
-        return f"Failed to write memory entity: {e}"
+        logger.exception("update_memory_entity failed")
+        return f"Failed to update memory entity: {e}"
 
 
 @tool("delete_memory_entity", parse_docstring=True)

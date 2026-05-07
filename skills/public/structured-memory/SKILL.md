@@ -40,18 +40,18 @@ Do NOT create task memory for trivial one-shot questions or clarifications.
 
 1. Check the appropriate index file (`facts/schema/index.md` or
    `facts/business/index.md`) via `get_memory_entity`
-2. Write the entity detail file via `write_memory_entity` using the template below.
+2. Write the entity detail file via `create_memory_entity` using the template below.
    The index entry is updated automatically — no separate `update_memory_index` call needed.
 
 ### Adding a new task memory
 
-1. Write the task summary via `write_memory_entity` under `tasks/YYYY/task-title.md`.
+1. Write the task summary via `create_memory_entity` under `tasks/YYYY/task-title.md`.
    The index entry is updated automatically.
 
 ### Updating existing memory
 
 1. Read the current file via `get_memory_entity`
-2. Edit the content and write back via `write_memory_entity`.
+2. Edit the content and write back via `update_memory_entity`.
    The old index entry is removed and the new one is added automatically.
 
 **For table entities** (`facts/schema/tables/`), use partial updates to avoid
@@ -63,7 +63,7 @@ replacing the entire file:
 3. Provide the changed fields via the `changes` parameter as a JSON dict
    (e.g. `{"definition": "new definition", "columns": [...]}`)
 4. Describe what changed via the `timeline_desc` parameter
-5. The tool will preserve all unchanged fields, append a new timeline entry,
+5. `update_memory_entity` will preserve all unchanged fields, append a new timeline entry,
    and update the `*更新:*` timestamp automatically
 
 **Timeline is APPEND-ONLY** — never remove or edit existing timeline entries.
@@ -187,7 +187,8 @@ All index files use this format:
 | `search_structured_memory` | Search memory files by keyword |
 | `get_memory_entity` | Read full content of an entity file |
 | `list_memory_entities` | Browse the memory directory tree |
-| `write_memory_entity` | Create (with `content`) or partially update (with `changes` + `timeline_desc`) an entity file; index auto-updated |
+| `create_memory_entity` | Create a new entity file with `content`; index auto-updated |
+| `update_memory_entity` | Partially update (with `changes` + `timeline_desc`) an existing entity file; index auto-updated |
 | `delete_memory_entity` | Delete an entity file (index auto-updated) |
 | `update_memory_index` | Manually add/remove/update index entries (rarely needed; write/delete handle this automatically) |
 

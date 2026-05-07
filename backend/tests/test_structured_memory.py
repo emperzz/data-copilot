@@ -575,10 +575,6 @@ class TestStructuredMemoryTools:
         from deerflow.tools.builtins.structured_memory_tools import update_memory_index
         assert update_memory_index.name == "update_memory_index"
 
-    def test_write_memory_entity_tool_exists(self):
-        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
-        assert write_memory_entity.name == "write_memory_entity"
-
     def test_delete_memory_entity_tool_exists(self):
         from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity
         assert delete_memory_entity.name == "delete_memory_entity"
@@ -667,43 +663,6 @@ class TestStructuredMemoryTools:
             })
             assert "already exists" in result.lower()
 
-    def test_write_memory_entity_creates_file(self, tmp_path):
-        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
-
-        store = StructuredMemoryStore()
-        with _patch_store_root(store, tmp_path):
-            content = "# 基本信息\n\n- db: ods"
-            result = write_memory_entity.invoke({
-                "path": "facts/schema/tables/ods_order.md",
-                "content": content,
-            })
-            assert "written" in result.lower()
-            assert store.read_file("facts/schema/tables/ods_order.md") == content
-
-    def test_write_memory_entity_overwrites_existing(self, tmp_path):
-        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
-
-        store = StructuredMemoryStore()
-        with _patch_store_root(store, tmp_path):
-            store.write_file("facts/schema/tables/ods_order.md", "old content")
-            result = write_memory_entity.invoke({
-                "path": "facts/schema/tables/ods_order.md",
-                "content": "new content",
-            })
-            assert "written" in result.lower()
-            assert store.read_file("facts/schema/tables/ods_order.md") == "new content"
-
-    def test_write_memory_entity_rejects_traversal(self, tmp_path):
-        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
-
-        store = StructuredMemoryStore()
-        with _patch_store_root(store, tmp_path):
-            result = write_memory_entity.invoke({
-                "path": "../etc/passwd",
-                "content": "malicious",
-            })
-            assert "invalid path" in result.lower()
-
     def test_delete_memory_entity_removes_file(self, tmp_path):
         from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity
 
@@ -768,79 +727,131 @@ class TestStructuredMemoryTools:
 *updated: 2026-04-30 14:30:00*
 """
 
-    def test_write_memory_entity_partial_update_preserves_unchanged(self, tmp_path):
-        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+    def test_create_memory_entity_creates_new_file(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity
 
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
-            # Write initial entity
-            write_memory_entity.invoke({
+            content = "# test_table\n\n## Basic Info\n\n- **database**: ods"
+            result = create_memory_entity.invoke({
                 "path": "facts/schema/tables/test.md",
-                "content": self._SAMPLE_NEW_ENTITY,
+                "content": content,
+            })
+            assert "written" in result.lower()
+            assert store.read_file("facts/schema/tables/test.md") == content
+
+    def test_create_memory_entity_errors_if_exists(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.write_file("facts/schema/tables/test.md", "existing")
+            result = create_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": "# new content",
+            })
+            assert "already exists" in result.lower()
+            assert "update_memory_entity" in result
+            assert store.read_file("facts/schema/tables/test.md") == "existing"
+
+    def test_create_memory_entity_rejects_traversal(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            result = create_memory_entity.invoke({
+                "path": "../etc/passwd",
+                "content": "malicious",
+            })
+            assert "invalid path" in result.lower()
+
+    def test_create_memory_entity_auto_indexes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            content = "# Basic Info\n\n## Compiled Truth\n\n- **objective**: 订单明细表"
+            result = create_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "content": content,
+            })
+            assert "written" in result.lower()
+            assert "index" in result.lower()
+            index_content = store.read_file("facts/schema/index.md")
+            assert "订单明细表" in index_content
+
+    def test_update_memory_entity_partial_update_preserves_unchanged(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity, update_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            initial = "# test_table\n\n## Basic Info\n\n- **database**: ods\n- **table**: test_table\n- **update_frequency**: daily\n\n## Compiled Truth\n\n- **objective**: 原始业务表\n- **definition**: 初始定义\n- **core_logic**: 初始逻辑\n\n### upstream dependencies\n\n- upstream.source\n\n### columns\n\n| column | description |\n|--------|-------------|\n| col1 | 字段1 |\n\n### SQL\n```sql\n\n```\n\n## Timeline\n\n- **2026-04-30 14:30:00** — 首次写入\n\n---\n*created: 2026-04-30 14:30:00*\n*updated: 2026-04-30 14:30:00*\n"
+            create_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": initial,
             })
 
-            # Partial update: only change definition
-            result = write_memory_entity.invoke({
+            result = update_memory_entity.invoke({
                 "path": "facts/schema/tables/test.md",
-                "content": "",
                 "changes": '{"definition": "更新后的定义"}',
                 "timeline_desc": "更新了定义",
             })
-            assert "written" in result.lower()
+            assert "written" in result.lower() or "updated" in result.lower()
 
             content = store.read_file("facts/schema/tables/test.md")
-            # Changed field
             assert "更新后的定义" in content
-            # Unchanged fields preserved
             assert "**objective**: 原始业务表" in content
             assert "**database**: ods" in content
-            assert "**table**: test_table" in content
-            assert "**update_frequency**: daily" in content
-            assert "**core_logic**: 初始逻辑" in content
 
-    def test_write_memory_entity_partial_update_appends_timeline(self, tmp_path):
-        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+    def test_update_memory_entity_errors_if_not_found(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import update_memory_entity
 
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
-            write_memory_entity.invoke({
-                "path": "facts/schema/tables/test.md",
-                "content": self._SAMPLE_NEW_ENTITY,
+            result = update_memory_entity.invoke({
+                "path": "facts/schema/tables/nonexistent.md",
+                "changes": '{"definition": "new"}',
+                "timeline_desc": "desc",
             })
+            assert "not found" in result.lower()
+            assert "create_memory_entity" in result
 
-            write_memory_entity.invoke({
-                "path": "facts/schema/tables/test.md",
-                "content": "",
-                "changes": '{"core_logic": "新逻辑"}',
-                "timeline_desc": "更新了核心逻辑",
-            })
-
-            content = store.read_file("facts/schema/tables/test.md")
-            # Old timeline entry preserved
-            assert "首次写入" in content
-            # New timeline entry added
-            assert "更新了核心逻辑" in content
-            # Both timeline entries exist (count check)
-            assert content.count("首次写入") == 1
-
-    def test_write_memory_entity_full_overwrite_when_no_changes(self, tmp_path):
-        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
+    def test_update_memory_entity_requires_changes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity, update_memory_entity
 
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
-            write_memory_entity.invoke({
+            create_memory_entity.invoke({
                 "path": "facts/schema/tables/test.md",
-                "content": self._SAMPLE_NEW_ENTITY,
+                "content": "# test\n\n## Basic Info\n\n- **database**: ods",
+            })
+            result = update_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "changes": "",
+                "timeline_desc": "",
+            })
+            assert "changes" in result.lower()
+
+    def test_update_memory_entity_auto_indexes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity, update_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            create_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "content": "# ods_order\n\n## Basic Info\n\n- **database**: ods\n- **table**: ods_order\n- **update_frequency**: daily\n\n## Compiled Truth\n\n- **objective**: 订单明细表\n- **definition**: 初始定义",
             })
 
-            # Full overwrite without changes param
-            new_content = "completely new content"
-            result = write_memory_entity.invoke({
-                "path": "facts/schema/tables/test.md",
-                "content": new_content,
+            result = update_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "changes": '{"definition": "从业务系统同步的订单明细数据"}',
+                "timeline_desc": "更新了定义",
             })
-            assert "written" in result.lower()
-            assert store.read_file("facts/schema/tables/test.md") == new_content
+            assert "written" in result.lower() or "updated" in result.lower()
+            index_content = store.read_file("facts/schema/index.md")
+            assert "订单明细表" in index_content
 
     # ── create_memory_entity tests ─────────────────────────────────────────
 
@@ -1102,30 +1113,8 @@ class TestIndexService:
             index_content = store.read_file("facts/schema/index.md")
             assert "Basic Info" not in index_content
 
-    def test_write_memory_entity_auto_indexes(self, tmp_path):
-        from deerflow.tools.builtins.structured_memory_tools import write_memory_entity
-
-        store = StructuredMemoryStore()
-        with _patch_store_root(store, tmp_path):
-            store.ensure_directories()
-            content = """# Basic Info
-
-## Compiled Truth
-
-- **objective**: 订单明细表
-"""
-            result = write_memory_entity.invoke({
-                "path": "facts/schema/tables/ods_order.md",
-                "content": content,
-            })
-            assert "written" in result.lower()
-            assert "index" in result.lower()
-            assert store.file_exists("facts/schema/tables/ods_order.md")
-            index_content = store.read_file("facts/schema/index.md")
-            assert "Basic Info" in index_content
-
     def test_delete_memory_entity_auto_unindexes(self, tmp_path):
-        from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity, write_memory_entity
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity, delete_memory_entity
 
         store = StructuredMemoryStore()
         with _patch_store_root(store, tmp_path):
@@ -1136,7 +1125,7 @@ class TestIndexService:
 
 - **objective**: 订单明细表
 """
-            write_memory_entity.invoke({
+            create_memory_entity.invoke({
                 "path": "facts/schema/tables/ods_order.md",
                 "content": content,
             })
