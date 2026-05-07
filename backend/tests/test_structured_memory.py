@@ -842,6 +842,60 @@ class TestStructuredMemoryTools:
             assert "written" in result.lower()
             assert store.read_file("facts/schema/tables/test.md") == new_content
 
+    def test_create_memory_entity_creates_new_file(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            content = "# test_table\n\n## Basic Info\n\n- **database**: ods"
+            result = create_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": content,
+            })
+            assert "written" in result.lower()
+            assert store.read_file("facts/schema/tables/test.md") == content
+
+    def test_create_memory_entity_errors_if_exists(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.write_file("facts/schema/tables/test.md", "existing")
+            result = create_memory_entity.invoke({
+                "path": "facts/schema/tables/test.md",
+                "content": "# new content",
+            })
+            assert "already exists" in result.lower()
+            assert "update_memory_entity" in result
+            assert store.read_file("facts/schema/tables/test.md") == "existing"
+
+    def test_create_memory_entity_rejects_traversal(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            result = create_memory_entity.invoke({
+                "path": "../etc/passwd",
+                "content": "malicious",
+            })
+            assert "invalid path" in result.lower()
+
+    def test_create_memory_entity_auto_indexes(self, tmp_path):
+        from deerflow.tools.builtins.structured_memory_tools import create_memory_entity
+
+        store = StructuredMemoryStore()
+        with _patch_store_root(store, tmp_path):
+            store.ensure_directories()
+            content = "# Basic Info\n\n## Compiled Truth\n\n- **objective**: 订单明细表"
+            result = create_memory_entity.invoke({
+                "path": "facts/schema/tables/ods_order.md",
+                "content": content,
+            })
+            assert "written" in result.lower()
+            assert "index" in result.lower()
+            index_content = store.read_file("facts/schema/index.md")
+            assert "订单明细表" in index_content
+
 
 class TestIndexService:
     """Tests for the auto-indexing index_service module."""

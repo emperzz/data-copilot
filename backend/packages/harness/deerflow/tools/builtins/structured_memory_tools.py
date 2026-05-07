@@ -221,6 +221,54 @@ def update_memory_index(
         return f"Failed to update index: {e}"
 
 
+@tool("create_memory_entity", parse_docstring=True)
+def create_memory_entity(
+    path: str,
+    content: str,
+) -> str:
+    """Create a new structured memory entity file.
+
+    Use this tool to create brand-new entity files in the structured memory
+    store. This writes to the actual structured memory store directory,
+    NOT the sandbox workspace. The corresponding index entry is updated
+    automatically.
+
+    Args:
+        path: Relative path within the memory store, e.g.
+            'facts/schema/tables/ods_order.md' or 'tasks/2026/task-001.md'.
+        content: The full markdown content for the new entity.
+
+    Returns:
+        Confirmation message with the path written and index update result.
+    """
+    try:
+        store = _get_store()
+        target = store.resolve_path(path)
+        lock_path = str(target) + ".lock"
+
+        lock_obj, _ = _acquire_entity_lock(lock_path)
+        try:
+            if store.file_exists(path):
+                return (
+                    f"Memory entity already exists: {path}. "
+                    "Use update_memory_entity to modify existing memories."
+                )
+
+            if not content:
+                return "Error: content cannot be empty when creating a new entity."
+
+            store.write_file(path, content)
+            index_msg = register_entity(store, path, None, content)
+            return f"Memory entity written: {path} | {index_msg}"
+        finally:
+            _release_entity_lock(lock_obj, lock_path)
+    except ValueError as e:
+        return f"Invalid path: {e}"
+    except Exception as e:
+        logger.exception("create_memory_entity failed")
+        return f"Failed to create memory entity: {e}"
+
+
 @tool("write_memory_entity", parse_docstring=True)
 def write_memory_entity(
     path: str,
