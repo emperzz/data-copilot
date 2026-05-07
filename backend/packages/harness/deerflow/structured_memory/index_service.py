@@ -1,9 +1,30 @@
 """Auto-indexing service for structured memory entity files."""
 
+import os
 import re
-from typing import Literal
+import sys
+from typing import IO, Literal
 
 from deerflow.structured_memory.storage import StructuredMemoryStore
+
+# Platform detection for file locking
+if sys.platform != "win32":
+    import fcntl
+
+    _LOCK_AVAILABLE = True
+else:
+    # Windows fallback: no-op lock (acceptable for single-process use)
+    _LOCK_AVAILABLE = False
+
+    class _NoOpLock:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def fileno(self):
+            return -1
 
 
 def get_index_path(entity_path: str) -> str | None:
@@ -141,6 +162,32 @@ def _write_index(store: StructuredMemoryStore, index_path: str, content: str) ->
     store.write_file(index_path, content)
 
 
+def _acquire_index_lock(
+    store: StructuredMemoryStore, index_path: str
+) -> tuple[IO, str]:
+    """Acquire exclusive lock on index file. Returns (lock_file, lock_path)."""
+    resolved = store.resolve_path(index_path)
+    lock_path = str(resolved) + ".lock"
+    lock_file: IO
+    if _LOCK_AVAILABLE:
+        lock_file = open(lock_path, "w")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    else:
+        lock_file = _NoOpLock()  # type: ignore
+    return lock_file, lock_path
+
+
+def _release_index_lock(lock_file: IO, lock_path: str) -> None:
+    """Release exclusive lock and close file."""
+    if _LOCK_AVAILABLE:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+        try:
+            os.unlink(lock_path)
+        except OSError:
+            pass  # Lock file may already be removed
+
+
 def _update_index(
     store: StructuredMemoryStore,
     index_path: str,
@@ -215,20 +262,24 @@ def register_entity(
     if not index_path:
         return f"No auto-indexing for: {path}"
 
-    new_title, new_desc = parse_entity_entry(new_content)
-    new_entry = build_index_entry(path, new_title, new_desc)
-    messages: list[str] = []
+    lock_file, lock_path = _acquire_index_lock(store, index_path)
+    try:
+        new_title, new_desc = parse_entity_entry(new_content)
+        new_entry = build_index_entry(path, new_title, new_desc)
+        messages: list[str] = []
 
-    if old_content:
-        old_title, old_desc = parse_entity_entry(old_content)
-        old_entry = build_index_entry(path, old_title, old_desc)
-        msg = _update_index(store, index_path, "remove", entry=old_entry, target=old_entry)
+        if old_content:
+            old_title, old_desc = parse_entity_entry(old_content)
+            old_entry = build_index_entry(path, old_title, old_desc)
+            msg = _update_index(store, index_path, "remove", entry=old_entry, target=old_entry)
+            messages.append(msg)
+
+        msg = _update_index(store, index_path, "add", entry=new_entry)
         messages.append(msg)
 
-    msg = _update_index(store, index_path, "add", entry=new_entry)
-    messages.append(msg)
-
-    return " | ".join(messages)
+        return " | ".join(messages)
+    finally:
+        _release_index_lock(lock_file, lock_path)
 
 
 def unregister_entity(
@@ -244,8 +295,12 @@ def unregister_entity(
     if not index_path:
         return f"No auto-indexing for: {path}"
 
-    title, desc = parse_entity_entry(content)
-    entry = build_index_entry(path, title, desc)
-    # For remove, target=entry (same string used to find and remove the line)
-    msg = _update_index(store, index_path, "remove", entry=entry, target=entry)
-    return msg
+    lock_file, lock_path = _acquire_index_lock(store, index_path)
+    try:
+        title, desc = parse_entity_entry(content)
+        entry = build_index_entry(path, title, desc)
+        # For remove, target=entry (same string used to find and remove the line)
+        msg = _update_index(store, index_path, "remove", entry=entry, target=entry)
+        return msg
+    finally:
+        _release_index_lock(lock_file, lock_path)
