@@ -8,6 +8,7 @@ The table entity uses a 3-layer structure:
 
 import json
 import re
+import yaml
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -113,8 +114,105 @@ def _format_timeline(timeline: list[TimelineEntry]) -> str:
     return "\n".join(lines)
 
 
+def _serialize_table_entity_to_frontmatter(entity: TableEntity) -> dict:
+    """Serialize TableEntity core fields to frontmatter dict."""
+    return {
+        "tablename": entity.basic_info.tablename,
+        "database": entity.basic_info.database,
+        "update_frequency": entity.basic_info.update_frequency,
+        "objective": entity.compiled_truth.objective,
+        "definition": entity.compiled_truth.definition,
+        "core_logic": entity.compiled_truth.core_logic,
+        "created_at": entity.created_at,
+        "updated_at": entity.updated_at,
+    }
+
+
+def _parse_frontmatter(content: str) -> tuple[dict | None, str]:
+    """Parse YAML frontmatter from markdown content.
+
+    Returns (frontmatter_dict, body_without_frontmatter) or (None, original_content).
+    """
+    if not content.strip().startswith("---"):
+        return None, content
+
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return None, content
+
+    fm_raw, body = parts[1], parts[2].strip()
+    try:
+        fm = yaml.safe_load(fm_raw)
+        if not isinstance(fm, dict):
+            return None, content
+        return fm, body
+    except yaml.YAMLError:
+        return None, content
+
+
+def _parse_from_frontmatter(fm: dict, body: str) -> TableEntity:
+    """Parse TableEntity from frontmatter dict and markdown body."""
+    # Basic Info
+    tablename = str(fm.get("tablename", "")) or "(unknown)"
+    database = str(fm.get("database", ""))
+    update_freq = fm.get("update_frequency", "daily")
+    if update_freq not in {"daily", "hourly", "weekly", "monthly", "yearly", "realtime", "onetime"}:
+        update_freq = "daily"
+
+    bi = TableBasicInfo(
+        tablename=tablename,
+        database=database,
+        update_frequency=update_freq,  # type: ignore[arg-type]
+    )
+
+    # Compiled Truth fields from frontmatter
+    objective = str(fm.get("objective", ""))
+    definition = str(fm.get("definition", ""))
+    core_logic = str(fm.get("core_logic", ""))
+
+    # Parse source_tables, columns, sql from body
+    source_tables = _parse_source_tables(body)
+    columns = _parse_columns(body)
+
+    sql: str | None = None
+    sql_m = re.search(r"```sql\s*\r?\n(.*?)\n```", body, re.DOTALL)
+    if sql_m:
+        sql_block = sql_m.group(1).strip()
+        sql = sql_block if sql_block else None
+
+    ct = TableCompiledTruth(
+        objective=objective,
+        definition=definition,
+        core_logic=core_logic,
+        source_tables=source_tables,
+        columns=columns,
+        sql=sql,
+    )
+
+    # Timeline from body
+    timeline = _parse_timeline(body)
+
+    # Timestamps from frontmatter
+    created_at = str(fm.get("created_at", "")) or None
+    updated_at = str(fm.get("updated_at", "")) or None
+
+    return TableEntity(
+        basic_info=bi,
+        compiled_truth=ct,
+        timeline=timeline,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
 def table_entity_to_markdown(entity: TableEntity) -> str:
-    """Serialize a TableEntity to the structured 3-layer markdown format."""
+    """Serialize a TableEntity to the structured 3-layer markdown format with YAML frontmatter."""
+    # 1. Generate YAML frontmatter
+    fm = _serialize_table_entity_to_frontmatter(entity)
+    fm = {k: v for k, v in fm.items() if v is not None}
+    fm_yaml = yaml.dump(fm, allow_unicode=True, sort_keys=False, default_flow_style=False).rstrip()
+
+    # 2. Generate markdown body
     bi = entity.basic_info
     ct = entity.compiled_truth
 
@@ -128,7 +226,7 @@ def table_entity_to_markdown(entity: TableEntity) -> str:
     created = entity.created_at or ""
     updated = entity.updated_at or ""
 
-    return f"""# {bi.tablename}
+    md_body = f"""# {bi.tablename}
 
 ## Basic Info
 
@@ -162,6 +260,77 @@ def table_entity_to_markdown(entity: TableEntity) -> str:
 *updated: {updated}*
 """
 
+    return f"---\n{fm_yaml}\n---\n\n{md_body}"
+
+
+# ── Deserialization Helpers (Module Level) ──────────────────────────────────
+
+
+def _is_sentinel(value: str) -> bool:
+    return value.strip() == _SENTINEL_NONE
+
+
+def _parse_source_tables(text: str) -> list[SourceTable]:
+    """Parse upstream dependencies section into SourceTable list."""
+    m = re.search(r"### upstream dependencies\s*\r?\n+(.+?)(?=\n###|\n##|\n---|\Z)", text, re.DOTALL)
+    if not m:
+        return []
+    section = m.group(1).strip()
+    if _is_sentinel(section):
+        return []
+    results: list[SourceTable] = []
+    entries = re.split(r"\n(?=- )", section)
+    for entry in entries:
+        entry = entry.strip()
+        if not entry.startswith("- "):
+            continue
+        name_m = re.match(r"- ([^\s]+)", entry)
+        if not name_m:
+            continue
+        full_name = name_m.group(1)
+        link_m = re.search(r"\[link\]\((.+?)\)", entry)
+        results.append(SourceTable(full_name=full_name, memory_link=link_m.group(1) if link_m else None))
+    return results
+
+
+def _parse_columns(text: str) -> list[TableColumn]:
+    """Parse columns markdown table into TableColumn list."""
+    m = re.search(r"### columns\s*\r?\n+(.+?)(?=\n###|\n##|\n---|\Z)", text, re.DOTALL)
+    if not m:
+        return []
+    section = m.group(1)
+    results: list[TableColumn] = []
+    for line in section.strip().split("\n"):
+        line = line.strip()
+        if not line.startswith("|") or line.startswith("|---"):
+            continue
+        # Skip header row
+        if "column" in line and "description" in line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        # Expected: ['', 'col_name', 'description', '']
+        if len(parts) >= 4 and parts[1] and not _is_sentinel(parts[1]):
+            desc = parts[2] if len(parts) > 2 and not _is_sentinel(parts[2]) else ""
+            results.append(TableColumn(name=parts[1], description=desc))
+    return results
+
+
+def _parse_timeline(text: str) -> list[TimelineEntry]:
+    """Parse Timeline section into TimelineEntry list."""
+    m = re.search(r"## Timeline\s*\r?\n+(.+?)(?=\n---|\Z)", text, re.DOTALL)
+    if not m:
+        return []
+    section = m.group(1).strip()
+    if _is_sentinel(section):
+        return []
+    results: list[TimelineEntry] = []
+    for line in section.split("\n"):
+        line = line.strip()
+        tm = re.match(r"- \*\*(.+?)\*\* — (.+)", line)
+        if tm:
+            results.append(TimelineEntry(time=tm.group(1).strip(), content=tm.group(2).strip()))
+    return results
+
 
 # ── Deserialization Helper ───────────────────────────────────────────────────
 
@@ -169,9 +338,7 @@ def table_entity_to_markdown(entity: TableEntity) -> str:
 def markdown_to_table_entity(content: str) -> TableEntity:
     """Best-effort parse of markdown content back into a TableEntity.
 
-    Used for reading existing entities from disk. This is inherently lossy
-    (markdown is unstructured), so the canonical serialization path is
-    ``table_entity_to_markdown``.
+    First tries YAML frontmatter, then falls back to regex parsing.
     """
     if not content or not content.strip():
         return TableEntity(
@@ -179,6 +346,12 @@ def markdown_to_table_entity(content: str) -> TableEntity:
             compiled_truth=TableCompiledTruth(),
         )
 
+    # 1. Try frontmatter parsing first
+    fm, body = _parse_frontmatter(content)
+    if fm:
+        return _parse_from_frontmatter(fm, body)
+
+    # 2. Fall back to regex parsing (backward compatibility)
     def _extract(pattern: str, text: str, default: str = "") -> str:
         m = re.search(pattern, text)
         return m.group(1).strip() if m else default
@@ -222,68 +395,6 @@ def markdown_to_table_entity(content: str) -> TableEntity:
         raw = _extract_field(text, "update_frequency")
         valid = {"daily", "hourly", "weekly", "monthly", "yearly", "realtime", "onetime"}
         return raw if raw in valid else "daily"
-
-    def _is_sentinel(value: str) -> bool:
-        return value.strip() == _SENTINEL_NONE
-
-    def _parse_source_tables(text: str) -> list[SourceTable]:
-        """Parse upstream dependencies section into SourceTable list."""
-        m = re.search(r"### upstream dependencies\s*\r?\n+(.+?)(?=\n###|\n##|\n---|\Z)", text, re.DOTALL)
-        if not m:
-            return []
-        section = m.group(1).strip()
-        if _is_sentinel(section):
-            return []
-        results: list[SourceTable] = []
-        entries = re.split(r"\n(?=- )", section)
-        for entry in entries:
-            entry = entry.strip()
-            if not entry.startswith("- "):
-                continue
-            name_m = re.match(r"- ([^\s]+)", entry)
-            if not name_m:
-                continue
-            full_name = name_m.group(1)
-            link_m = re.search(r"\[link\]\((.+?)\)", entry)
-            results.append(SourceTable(full_name=full_name, memory_link=link_m.group(1) if link_m else None))
-        return results
-
-    def _parse_columns(text: str) -> list[TableColumn]:
-        """Parse columns markdown table into TableColumn list."""
-        m = re.search(r"### columns\s*\r?\n+(.+?)(?=\n###|\n##|\n---|\Z)", text, re.DOTALL)
-        if not m:
-            return []
-        section = m.group(1)
-        results: list[TableColumn] = []
-        for line in section.strip().split("\n"):
-            line = line.strip()
-            if not line.startswith("|") or line.startswith("|---"):
-                continue
-            # Skip header row
-            if "column" in line and "description" in line:
-                continue
-            parts = [p.strip() for p in line.split("|")]
-            # Expected: ['', 'col_name', 'description', '']
-            if len(parts) >= 4 and parts[1] and not _is_sentinel(parts[1]):
-                desc = parts[2] if len(parts) > 2 and not _is_sentinel(parts[2]) else ""
-                results.append(TableColumn(name=parts[1], description=desc))
-        return results
-
-    def _parse_timeline(text: str) -> list[TimelineEntry]:
-        """Parse Timeline section into TimelineEntry list."""
-        m = re.search(r"## Timeline\s*\r?\n+(.+?)(?=\n---|\Z)", text, re.DOTALL)
-        if not m:
-            return []
-        section = m.group(1).strip()
-        if _is_sentinel(section):
-            return []
-        results: list[TimelineEntry] = []
-        for line in section.split("\n"):
-            line = line.strip()
-            tm = re.match(r"- \*\*(.+?)\*\* — (.+)", line)
-            if tm:
-                results.append(TimelineEntry(time=tm.group(1).strip(), content=tm.group(2).strip()))
-        return results
 
     database = _extract_field(content, "database")
     tablename = _extract_field(content, "table")
