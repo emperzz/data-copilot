@@ -663,6 +663,58 @@ class TestStructuredMemoryTools:
             })
             assert "already exists" in result.lower()
 
+    def test_get_structured_memory_context_injects_core_only(self, tmp_path):
+        """_get_structured_memory_context should inject only core.md content, not index files."""
+        from deerflow.config.structured_memory_config import StructuredMemoryConfig
+        from deerflow.structured_memory import CORE_MEMORY_FILENAME
+        from deerflow.agents.lead_agent.prompt import _get_structured_memory_context
+
+        core_md_content = """# Core Memory
+
+## 用户域
+- 已完成 dim_user 等表的 schema 整理
+- 关键事实：用户主数据包括 user_id, name, phone
+
+## 订单域
+- 已完成 dwd_order 系列表的 schema 整理
+"""
+
+        with patch("deerflow.structured_memory.storage._store", None):
+            with patch("deerflow.config.structured_memory_config.get_structured_memory_config") as mock_config:
+                mock_config.return_value = StructuredMemoryConfig(enabled=True, injection_enabled=True)
+                with patch("deerflow.structured_memory.storage.get_structured_memory_store") as mock_get_store:
+                    store = StructuredMemoryStore()
+                    with _patch_store_root(store, tmp_path):
+                        store.ensure_directories()
+                        store.write_file(CORE_MEMORY_FILENAME, core_md_content)
+                        mock_get_store.return_value = store
+
+                        result = _get_structured_memory_context()
+
+                        assert "用户域" in result
+                        assert "dim_user" in result
+                        assert "index.md" not in result
+                        assert "facts/index.md" not in result
+                        assert "tasks/index.md" not in result
+
+    def test_get_structured_memory_context_core_not_found(self, tmp_path):
+        """Should return fallback message when core.md does not exist."""
+        from deerflow.config.structured_memory_config import StructuredMemoryConfig
+        from deerflow.agents.lead_agent.prompt import _get_structured_memory_context
+
+        with patch("deerflow.structured_memory.storage._store", None):
+            with patch("deerflow.config.structured_memory_config.get_structured_memory_config") as mock_config:
+                mock_config.return_value = StructuredMemoryConfig(enabled=True, injection_enabled=True)
+                with patch("deerflow.structured_memory.storage.get_structured_memory_store") as mock_get_store:
+                    store = StructuredMemoryStore()
+                    with _patch_store_root(store, tmp_path):
+                        store.ensure_directories()
+                        mock_get_store.return_value = store
+
+                        result = _get_structured_memory_context()
+
+                        assert "No core memory yet" in result
+
     def test_delete_memory_entity_removes_file(self, tmp_path):
         from deerflow.tools.builtins.structured_memory_tools import delete_memory_entity
 
