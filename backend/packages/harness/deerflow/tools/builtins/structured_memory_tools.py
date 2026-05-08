@@ -66,7 +66,7 @@ def _release_entity_lock(lock_obj, lock_path: str) -> None:
 
 def _parse_changes_for_path(changes_str: str, path: str) -> dict:
     """Parse changes JSON using the appropriate parser based on entity type."""
-    if path.startswith("facts/schema/tables/") or path.startswith("facts/schema/fields/"):
+    if path.startswith("facts/warehouse/"):
         return parse_changes_json(changes_str)
     else:
         return parse_business_changes_json(changes_str)
@@ -80,11 +80,11 @@ def _apply_partial_update_for_path(
 ) -> str:
     """Route partial update to the correct handler based on entity type.
 
-    facts/schema/tables/* → TableEntity (apply_partial_update)
-    facts/business/*      → BusinessEntity (apply_partial_update_for_business)
-    others                → BusinessEntity (apply_partial_update_for_business, default)
+    facts/warehouse/* → TableEntity (apply_partial_update)
+    facts/business/* / facts/technical/* → BusinessEntity (apply_partial_update_for_business)
+    others → BusinessEntity (apply_partial_update_for_business, default)
     """
-    if path.startswith("facts/schema/tables/") or path.startswith("facts/schema/fields/"):
+    if path.startswith("facts/warehouse/"):
         return apply_partial_update(existing_markdown, changes, timeline_desc)
     else:
         return apply_partial_update_for_business(existing_markdown, changes, timeline_desc)
@@ -126,7 +126,7 @@ def get_memory_entity(
 
     Args:
         path: Relative path to the memory file, e.g.
-            'facts/schema/tables/ods_order.md' or 'tasks/2026/task-2026-04-01.md'.
+            'facts/warehouse/ods_order.md' or 'tasks/2026/task-2026-04-01.md'.
 
     Returns:
         The full markdown content of the memory file.
@@ -181,12 +181,12 @@ def update_memory_index(
     files, use the write_file tool directly.
 
     Args:
-        index_path: Relative path to the index file, e.g. 'facts/schema/index.md'.
+        index_path: Relative path to the index file, e.g. 'facts/warehouse/index.md'.
         action: 'add' to append a new entry, 'remove' to delete an entry by
             matching the target string, 'update' to replace an entry matching
             the target string with the new entry.
         entry: The markdown list item entry, e.g.
-            '- [ods.order](tables/ods_order.md) — 订单明细表'
+            '- [ods.order](ods_order.md) — 订单明细表'
         target: For 'remove' and 'update' actions, the exact text to find
             and remove/replace.
 
@@ -263,7 +263,7 @@ def create_memory_entity(
 
     Args:
         path: Relative path within the memory store, e.g.
-            'facts/schema/tables/ods_order.md' or 'tasks/2026/task-001.md'.
+            'facts/warehouse/ods_order.md' or 'tasks/2026/task-001.md'.
         content: The full markdown content for the new entity.
 
     Returns:
@@ -311,7 +311,7 @@ def update_memory_entity(
 
     Args:
         path: Relative path to the existing memory file, e.g.
-            'facts/schema/tables/ods_order.md'.
+            'facts/warehouse/ods_order.md'.
         changes: JSON dict of changed fields. Only the specified fields
             will be modified; all others are preserved.
         timeline_desc: Description for the new timeline entry.
@@ -364,7 +364,7 @@ def delete_memory_entity(
 
     Args:
         path: Relative path to the memory file to delete, e.g.
-            'facts/schema/tables/ods_order.md'.
+            'facts/warehouse/ods_order.md'.
 
     Returns:
         Confirmation message describing deletion and index cleanup.

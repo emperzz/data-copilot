@@ -4,22 +4,26 @@ FACTS_INDEX_TEMPLATE = """# Facts Index
 
 > 企业事实记忆索引。每行格式: `- [实体名](相对路径) — 简介`
 
-## Schema (数仓架构)
-
-- [库表索引](schema/index.md) — 所有已记录的数据库表
-
 ## Business (业务逻辑)
 
-- [业务概念索引](business/index.md) — 所有已记录的业务定义
+- [业务概念索引](business/index.md) — 所有已记录的业务定义（指标、漏斗、业务规则、栏目体系、业务模式、业务流程）
+
+## Technical (技术规范)
+
+- [技术规范索引](technical/index.md) — 事件命名、参数定义、上报规则
+
+## Warehouse (数仓结构)
+
+- [数仓结构索引](warehouse/index.md) — 表定义、字段类型（预留给未来）
 
 ---
 
 *最后更新: {last_updated}*
 """
 
-SCHEMA_INDEX_TEMPLATE = """# Schema Index
+WAREHOUSE_INDEX_TEMPLATE = """# Warehouse Index
 
-> 数仓库表索引。每行格式: `- [db.table](tables/xxx.md) — 一句话描述`
+> 数仓结构索引。每行格式: `- [db.table](xxx.md) — 一句话描述`
 
 {entries}
 

@@ -43,9 +43,9 @@ class StructuredMemoryStore:
         """Create the base directory structure if it doesn't exist."""
         dirs = [
             self.root,
-            self.root / "facts" / "schema" / "tables",
-            self.root / "facts" / "schema" / "fields",
             self.root / "facts" / "business",
+            self.root / "facts" / "technical",
+            self.root / "facts" / "warehouse",
             self.root / "tasks",
         ]
         for d in dirs:

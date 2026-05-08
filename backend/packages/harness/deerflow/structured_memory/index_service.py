@@ -34,10 +34,13 @@ def get_index_path(entity_path: str) -> str | None:
     category (e.g., root facts/index.md, README.md, etc.).
     """
     path = entity_path.strip("/")
-    if path.startswith("facts/schema/tables/"):
-        return "facts/schema/index.md"
-    if path.startswith("facts/schema/fields/"):
-        return "facts/schema/index.md"
+    # Don't auto-index index files themselves
+    if path.endswith("/index.md"):
+        return None
+    if path.startswith("facts/warehouse/"):
+        return "facts/warehouse/index.md"
+    if path.startswith("facts/technical/"):
+        return "facts/technical/index.md"
     if path.startswith("facts/business/"):
         return "facts/business/index.md"
     if path.startswith("tasks/"):
@@ -61,7 +64,7 @@ def _search_field(text: str, *labels: str) -> str | None:
 def parse_entity_entry(content: str) -> tuple[str, str]:
     """Extract (title, description) from an entity file's markdown content.
 
-    Title: for table entities (files under facts/schema/tables/), extracted from
+    Title: for warehouse entities (files under facts/warehouse/), extracted from
     '**table**:' field to avoid the generic '# Basic Info' heading.
     For other entities: first line matching '^#\\s+(.+)$' (first markdown heading).
     Description heuristic:
@@ -122,20 +125,20 @@ def build_index_entry(entity_path: str, title: str, description: str) -> str:
     """Build a markdown list-item entry for an index file.
 
     The entry format is category-specific based on the entity path:
-      - facts/schema/tables/X.md  →  '- [title](tables/X.md) — desc'
-      - facts/schema/fields/X.md  →  '- [title](fields/X.md) — desc'
-      - facts/business/X.md        →  '- [title](X.md) — desc'
-      - tasks/YYYY/X.md            →  '- [title](YYYY/X.md) — desc'
+      - facts/warehouse/X.md  →  '- [title](X.md) — desc'
+      - facts/technical/X.md   →  '- [title](X.md) — desc'
+      - facts/business/X.md    →  '- [title](X.md) — desc'
+      - tasks/YYYY/X.md        →  '- [title](YYYY/X.md) — desc'
     """
     entity = entity_path.strip("/")
     parts = entity.split("/")
 
-    if entity.startswith("facts/schema/tables/"):
+    if entity.startswith("facts/warehouse/"):
         filename = parts[-1]
-        link = f"tables/{filename}"
-    elif entity.startswith("facts/schema/fields/"):
+        link = filename
+    elif entity.startswith("facts/technical/"):
         filename = parts[-1]
-        link = f"fields/{filename}"
+        link = filename
     elif entity.startswith("facts/business/"):
         filename = parts[-1]
         link = filename
