@@ -24,6 +24,15 @@ Create or update fact memories when the user provides:
    conventions
 4. **Corrections** — the user says existing memory is wrong or outdated
 
+### Core Memory (`core.md`)
+
+Update the top-level summary when:
+
+1. A new domain or scope becomes active (`## 已处理领域`)
+2. A critical cross-cutting fact is discovered that the next prompt should
+   immediately know without searching (`## 关键事实摘要`)
+3. Use `update_core_memory` — do NOT use `update_memory_entity` for `core.md`
+
 ### Task Memory (`tasks/`)
 
 Create a task memory after completing a significant task for the user:
@@ -48,7 +57,25 @@ Do NOT create task memory for trivial one-shot questions or clarifications.
 1. Write the task summary via `create_memory_entity` under `tasks/YYYY/task-title.md`.
    The index entry is updated automatically.
 
-### Updating existing memory
+### Updating core.md (`core.md`)
+
+The `core.md` file is the top-level summary of the entire memory system, injected
+into every system prompt via `<structured_memory>`. It contains three sections:
+`## 已处理领域`, `## 关键事实摘要`, and `## 最后更新时间`.
+
+Update `core.md` when you want the next prompt to immediately surface important
+context without requiring a search:
+
+1. Call `update_core_memory` with only the fields that have changed
+2. Unchanged sections are preserved automatically
+3. The `last_updated` field defaults to today's date if not provided
+
+Examples of when to update `core.md`:
+- User completes a major milestone: update `## 已处理领域` to reflect new scope
+- You discover a critical fact that affects multiple tables: update `## 关键事实摘要`
+- Never update `core.md` for routine single-table notes — those belong in entity files
+
+### Updating existing entity memory
 
 1. Read the current file via `get_memory_entity`
 2. Edit the content and write back via `update_memory_entity`.
@@ -242,6 +269,7 @@ Each index also has a `*最后更新: {last_updated}*` footer. Do not edit index
 | `list_memory_entities` | Browse the memory directory tree |
 | `create_memory_entity` | Create a new entity file with `content`; index auto-updated |
 | `update_memory_entity` | Partially update (with `changes` + `timeline_desc`) an existing entity file; index auto-updated |
+| `update_core_memory` | Update the top-level `core.md` summary (`processed_domains`, `key_facts`, `last_updated`); section-level replacement |
 | `delete_memory_entity` | Delete an entity file (index auto-updated) |
 | `update_memory_index` | Manually add/remove/update index entries (handled automatically by create/update/delete; rarely needed manually) |
 
