@@ -69,12 +69,19 @@ replacing the entire file:
 **Timeline is APPEND-ONLY** — never remove or edit existing timeline entries.
 They serve as an audit log of all changes.
 
-### Required and Uncertain Fields
+### Information Source Rule
 
-- **tablename** is REQUIRED and must never be empty
-- If the user does not provide a value for a required field (e.g., objective,
-  definition, update_frequency), ask the user for clarification — do NOT
-  default to empty strings or made-up values
+**All memory content must come from the user — never guess or assume.**
+
+1. **Must be user-provided**: Every fact, definition, metric, or rule stored in memory must be explicitly stated by the user. Do not infer, deduce, or fill in gaps with plausible but unconfirmed content.
+2. **Uncertain → confirm first**: If you are unsure about any field value, ask the user for clarification before writing to memory. Do not write "待确认", "unknown", or any placeholder — wait until you have a confirmed answer.
+   - **For schema entities** (`facts/schema/tables/`, `facts/schema/fields/`): this is especially critical. Column meanings, table purposes, update frequencies, upstream dependencies — if the user has not stated them explicitly, ask. Only leave a field blank if the user explicitly says they also do not know.
+3. **Corrections are evidence**: When the user corrects existing memory, that correction is treated as a confirmed fact. Update the entity and append a timeline entry describing the correction.
+
+This rule takes priority over all other memory guidelines. Memory that is invented rather than confirmed is worse than no memory at all.
+
+**System-level constraints**:
+- `tablename` (for table entities) is **required** — if the user does not provide it, ask before creating the entity
 - For optional fields (e.g., sql, memory links), leave empty or omit when unknown
 
 ### Deleting memory
