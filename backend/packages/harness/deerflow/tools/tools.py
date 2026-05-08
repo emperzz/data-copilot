@@ -96,6 +96,7 @@ def get_available_tools(
             get_memory_entity,
             list_memory_entities,
             search_structured_memory,
+            update_core_memory,
             update_memory_entity,
             update_memory_index,
         )
@@ -106,6 +107,7 @@ def get_available_tools(
             list_memory_entities,
             create_memory_entity,
             update_memory_entity,
+            update_core_memory,
             delete_memory_entity,
             update_memory_index,
         ])
