@@ -617,9 +617,9 @@ def _get_structured_memory_context() -> str:
         store = get_structured_memory_store()
         store.ensure_directories()
 
-        # Read core.md - create with template if not exists
+        core_path = CORE_MEMORY_FILENAME
         try:
-            core_content = store.read_file(CORE_MEMORY_FILENAME)
+            core_content = store.read_file(core_path)
         except FileNotFoundError:
             # Auto-create with initial template
             from datetime import datetime
@@ -635,7 +635,7 @@ def _get_structured_memory_context() -> str:
 ## 最后更新时间
 {now}
 """
-            store.write_file(CORE_MEMORY_FILENAME, template)
+            store.write_file(core_path, template)
             core_content = template
 
         content = core_content
@@ -655,7 +655,12 @@ new entity files, `update_memory_entity` to update existing files, and
 </structured_memory>
 """
     except Exception as e:
-        logger.error("Failed to load structured memory context: %s", e)
+        logger.warning(
+            "Failed to load structured memory context (enabled=%s, core_path=%s): %s",
+            config.enabled if "config" in dir() else "unknown",
+            core_path if "core_path" in dir() else "unknown",
+            e,
+        )
         return ""
 
 

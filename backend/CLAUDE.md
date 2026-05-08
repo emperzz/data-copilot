@@ -384,6 +384,50 @@ Focused regression coverage for the updater lives in `backend/tests/test_memory_
 - `max_facts` / `fact_confidence_threshold` - Fact storage limits (100 / 0.7)
 - `max_injection_tokens` - Token limit for prompt injection (2000)
 
+### Enterprise Structured Memory (`packages/harness/deerflow/structured_memory/`)
+
+File-based knowledge management system for data warehouse metadata, business definitions, and task history. Complementary to the LLM-based Memory System above — structured memory is agent-managed markdown with explicit schema, while the Memory System uses LLM extraction.
+
+**Directory Structure** (under `{base_dir}/structured_memory/`):
+- `facts/warehouse/` — Table entities (ods, dwd, dws, dim, etc.)
+- `facts/technical/` — Technical specifications (naming conventions, parameter definitions)
+- `facts/business/` — Business definitions (metrics, funnels, business rules)
+- `tasks/` — Task history organized by year
+- `core.md` — Top-level summary injected into system prompt
+
+**Core File** (`core.md`):
+- Auto-created with a template on first access when `structured_memory.enabled = true`
+- Contains domain-level summaries; full entity details loaded on demand via tools
+- Injected into system prompt via `_get_structured_memory_context()` in `prompt.py`
+
+**Components**:
+- `models.py` - Pydantic models (`TableEntity`, `BusinessEntity`) with YAML frontmatter serialization, markdown parsing, and partial update helpers (`apply_partial_update`, `apply_partial_update_for_business`)
+- `storage.py` - `StructuredMemoryStore` with atomic writes (temp file + rename), path traversal protection (`resolve_path` + `is_relative_to`), thread-safe singleton
+- `index_service.py` - Auto-indexing: registers/unregisters entities in `index.md` files on create/update/delete; uses `fcntl` file locking (Linux) or `_NoOpLock` (Windows)
+- `search.py` - Full-text search across `.md` files with substring matching and line snippets
+- `templates.py` - Markdown templates for all entity types and index files
+
+**Tools** (`tools/builtins/structured_memory_tools.py`):
+- `search_structured_memory` - Keyword search across memory files
+- `get_memory_entity` - Read full entity content by relative path
+- `list_memory_entities` - Tree-formatted directory listing
+- `create_memory_entity` - Create new entity with auto-registration
+- `update_memory_entity` - Partial update (parse → mutate model → re-serialize); auto-updates index
+- `delete_memory_entity` - Delete entity with auto-unregistration
+
+**Data Flow for Index Updates**:
+1. Tool calls `register_entity(store, path, old_content, new_content)` or `unregister_entity(store, path, content)`
+2. `_acquire_index_lock()` locks the target `index.md` via `fcntl.LOCK_EX`
+3. Entry parsed via `parse_entity_entry()` (extracts title from `**table**:` or first `# heading`)
+4. `_update_index()` adds/removes/replaces the list item
+5. `_release_index_lock()` releases and removes the `.lock` file
+
+**Configuration** (`config.yaml` → `structured_memory`):
+- `enabled` - Master switch
+- `storage_path` - Defaults to `{base_dir}/structured_memory/`
+- `injection_enabled` - Whether to inject `core.md` summary into system prompt
+- `max_index_tokens` - Token budget for `core.md` injection (default: 1500)
+
 ### Reflection System (`packages/harness/deerflow/reflection/`)
 
 - `resolve_variable(path)` - Import module and return variable (e.g., `module.path:variable_name`)
