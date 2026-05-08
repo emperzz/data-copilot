@@ -648,8 +648,8 @@ summaries of data warehouse metadata, business definitions, and task history.
 Only the core summary is shown here — use `search_structured_memory` to find specific
 information by keyword, `list_memory_entities` to browse the directory structure,
 `get_memory_entity` to load detailed entity files, `create_memory_entity` to create
-new entity files, `update_memory_entity` to update existing files, and
-`delete_memory_entity` to remove them.
+new entity files, `update_memory_entity` to update existing files,
+`update_core_memory` to update the core summary, and `delete_memory_entity` to remove them.
 
 {content}
 </structured_memory>

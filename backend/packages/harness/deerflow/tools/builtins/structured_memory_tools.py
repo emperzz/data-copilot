@@ -22,13 +22,16 @@ else:
         def fileno(self):
             return -1
 
+import re
+
 from deerflow.structured_memory import (
+    CORE_MEMORY_FILENAME,
     StructuredMemoryStore,
     apply_partial_update,
     apply_partial_update_for_business,
     get_structured_memory_store,
-    parse_changes_json,
     parse_business_changes_json,
+    parse_changes_json,
     register_entity,
     search_memory_files,
     unregister_entity,
@@ -219,7 +222,7 @@ def update_memory_index(
             elif action == "remove":
                 if not target:
                     return "The 'target' parameter is required for 'remove' action."
-                new_lines = [l for l in lines if target.strip() not in l]
+                new_lines = [line for line in lines if target.strip() not in line]
                 if len(new_lines) == len(lines):
                     return f"Target not found in {index_path}: {target}"
                 store.write_file(index_path, "\n".join(new_lines) + "\n")
@@ -390,3 +393,112 @@ def delete_memory_entity(
     except Exception as e:
         logger.exception("delete_memory_entity failed")
         return f"Failed to delete memory entity: {e}"
+
+
+@tool("update_core_memory", parse_docstring=True)
+def update_core_memory(
+    processed_domains: str = "",
+    key_facts: str = "",
+    last_updated: str = "",
+) -> str:
+    """Update the core.md top-level summary file.
+
+    Use this tool to record domain-level summaries, key facts, or processed
+    areas into the structured memory core summary. Changes are applied to
+    specific ## sections without touching the rest of the file. Only provided
+    fields are updated; omitted fields preserve their existing content.
+
+    Args:
+        processed_domains: Text to replace in the "已处理领域" section.
+        key_facts: Text to replace in the "关键事实摘要" section.
+        last_updated: Text to replace in the "最后更新时间" section.
+            Defaults to today's date if not provided. Use format YYYY-MM-DD.
+
+    Returns:
+        Confirmation message describing what was changed.
+    """
+    updates_dict = {
+        k: v for k, v in {
+            "processed_domains": processed_domains,
+            "key_facts": key_facts,
+            "last_updated": last_updated,
+        }.items() if v
+    }
+
+    if not updates_dict:
+        return "No fields provided — nothing to update."
+
+    if not last_updated:
+        from datetime import datetime
+        updates_dict["last_updated"] = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        store = _get_store()
+        core_path = CORE_MEMORY_FILENAME
+
+        try:
+            current_content = store.read_file(core_path)
+        except FileNotFoundError:
+            return (
+                f"Error: {core_path} not found. It will be created automatically "
+                "on the next prompt generation if structured_memory is enabled."
+            )
+
+        new_content = _apply_core_memory_updates(current_content, updates_dict)
+        store.write_file(core_path, new_content)
+
+        return f"core.md updated — changed sections: {', '.join(updates_dict.keys())}"
+    except Exception as e:
+        logger.exception("update_core_memory failed")
+        return f"Failed to update core memory: {e}"
+
+
+def _apply_core_memory_updates(content: str, updates: dict) -> str:
+    """Apply section-level updates to a core.md file.
+
+    Each ## heading marks the start of a section. This function replaces
+    the content between one heading and the next (or end of file) with
+    the new value provided in updates.
+    """
+    section_keys = {
+        "已处理领域": "processed_domains",
+        "关键事实摘要": "key_facts",
+        "最后更新时间": "last_updated",
+    }
+
+    # Build a regex that matches ## heading lines
+    pattern = re.compile(r"^(## .+)$", re.MULTILINE)
+
+    lines = content.splitlines()
+    result_lines: list[str] = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        match = pattern.match(line)
+        if match:
+            heading = match.group(1)
+            # Extract section name (text after "## ")
+            section_name = heading[3:].strip()
+            field_key = section_keys.get(section_name)
+
+            result_lines.append(line)
+            i += 1
+
+            if field_key and field_key in updates:
+                # Consume lines until next ## or end of file
+                while i < len(lines) and not lines[i].startswith("## "):
+                    i += 1
+                # Insert new content (single paragraph, preserve trailing newline)
+                new_value = str(updates[field_key]).strip()
+                result_lines.append(new_value if new_value else "（暂无）")
+            else:
+                # Preserve existing content
+                while i < len(lines) and not lines[i].startswith("## "):
+                    result_lines.append(lines[i])
+                    i += 1
+        else:
+            result_lines.append(line)
+            i += 1
+
+    return "\n".join(result_lines) + "\n"
