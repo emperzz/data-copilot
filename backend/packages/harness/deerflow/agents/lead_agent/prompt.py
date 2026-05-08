@@ -643,6 +643,8 @@ def _get_structured_memory_context() -> str:
             return ""
 
         return f"""<structured_memory>
+**IMPORTANT WORKFLOW: Before performing ANY structured memory operations (creating, updating, or deleting memory entities), you MUST read the structured-memory skill first. This ensures you follow the correct workflow, use the proper entity templates, respect the Information Source Rule (never guess — always confirm with the user), and understand the required fields. Failure to read the skill before acting may result in violations of memory update protocols.**
+
 Below is the enterprise structured memory core summary. This contains domain-level
 summaries of data warehouse metadata, business definitions, and task history.
 Only the core summary is shown here — use `search_structured_memory` to find specific
