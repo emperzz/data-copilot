@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -370,7 +369,6 @@ You are {agent_name}, an open-source super agent.
 {self_update_section}
 {memory_context}
 {structured_memory_context}
-
 <thinking_style>
 - Think concisely and strategically about the user's request BEFORE taking action
 - Break down the task: What is clear? What is ambiguous? What is missing?
@@ -887,8 +885,11 @@ def apply_prompt_template(
     custom_mounts_section = _build_custom_mounts_section(app_config=app_config)
     acp_and_mounts_section = "\n".join(section for section in (acp_section, custom_mounts_section) if section)
 
-    # Format the prompt with dynamic skills and memory
-    prompt = SYSTEM_PROMPT_TEMPLATE.format(
+    # Build and return the fully static system prompt.
+    # Memory and current date are injected per-turn via DynamicContextMiddleware
+    # as a <system-reminder> in the first HumanMessage, keeping this prompt
+    # identical across users and sessions for maximum prefix-cache reuse.
+    return SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=agent_name or "DeerFlow 2.0",
         soul=get_agent_soul(agent_name),
         self_update_section=_build_self_update_section(agent_name),
@@ -901,5 +902,3 @@ def apply_prompt_template(
         subagent_thinking=subagent_thinking,
         acp_section=acp_and_mounts_section,
     )
-
-    return prompt + f"\n<current_date>{datetime.now().strftime('%Y-%m-%d, %A')}</current_date>"
