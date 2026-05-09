@@ -4,7 +4,7 @@ DeerFlow includes automatic conversation summarization to handle long conversati
 
 ## Overview
 
-The summarization feature uses LangChain's `SummarizationMiddleware` to monitor conversation history and trigger summarization based on configurable thresholds. When activated, it:
+The summarization feature uses DeerFlow's `DeerFlowSummarizationMiddleware` (extends LangChain's `SummarizationMiddleware`) to monitor conversation history and trigger summarization based on configurable thresholds. When activated, it:
 
 1. Monitors message token counts in real-time
 2. Triggers summarization when thresholds are met

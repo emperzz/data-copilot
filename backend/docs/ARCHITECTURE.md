@@ -14,9 +14,9 @@ This document provides a comprehensive overview of the DeerFlow backend architec
 │                          Nginx (Port 2026)                               │
 │                    Unified Reverse Proxy Entry Point                      │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │  /api/langgraph/*  →  LangGraph Server (2024)                      │  │
+│  │  /api/langgraph/*  →  Gateway API (8001, embedded runtime)         │  │
 │  │  /api/*            →  Gateway API (8001)                           │  │
-│  │  /*                →  Frontend (3000)                               │  │
+│  │  /*                →  Frontend (3000)                              │  │
 │  └────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────┬────────────────────────────────────────┘
                                   │
@@ -24,8 +24,8 @@ This document provides a comprehensive overview of the DeerFlow backend architec
           │                       │                       │
           ▼                       ▼                       ▼
 ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
-│   LangGraph Server  │ │    Gateway API      │ │     Frontend        │
-│     (Port 2024)     │ │    (Port 8001)      │ │    (Port 3000)      │
+│   Gateway API       │ │    Gateway API      │ │     Frontend        │
+│    (Port 8001)       │ │    (Port 8001)       │ │    (Port 3000)      │
 │                     │ │                     │ │                     │
 │  - Agent Runtime    │ │  - Models API       │ │  - Next.js App      │
 │  - Thread Mgmt      │ │  - MCP Config       │ │  - React UI         │
@@ -33,11 +33,10 @@ This document provides a comprehensive overview of the DeerFlow backend architec
 │  - Checkpointing    │ │  - File Uploads     │ │                     │
 │                     │ │  - Thread Cleanup   │ │                     │
 │                     │ │  - Artifacts        │ │                     │
-└─────────────────────┘ └─────────────────────┘ └─────────────────────┘
+└─────────────────────┘ │  - Channels         │ └─────────────────────┘
+          │             └─────────────────────┘
           │                       │
-          │     ┌─────────────────┘
-          │     │
-          ▼     ▼
+          └───────────────────────┘
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                         Shared Configuration                              │
 │  ┌─────────────────────────┐  ┌────────────────────────────────────────┐ │
@@ -52,9 +51,9 @@ This document provides a comprehensive overview of the DeerFlow backend architec
 
 ## Component Details
 
-### LangGraph Server
+### Agent Runtime (embedded in Gateway API)
 
-The LangGraph server is the core agent runtime, built on LangGraph for robust multi-agent workflow orchestration.
+The agent runtime is the core DeerFlow agent, built on LangGraph for robust multi-agent workflow orchestration. It runs inside the Gateway API process (not as a separate server).
 
 **Entry Point**: `packages/harness/deerflow/agents/lead_agent/agent.py:make_lead_agent`
 
@@ -82,49 +81,54 @@ FastAPI application providing REST endpoints for non-agent operations.
 
 **Entry Point**: `app/gateway/app.py`
 
-**Routers**:
-- `models.py` - `/api/models` - Model listing and details
-- `mcp.py` - `/api/mcp` - MCP server configuration
-- `skills.py` - `/api/skills` - Skills management
-- `uploads.py` - `/api/threads/{id}/uploads` - File upload
-- `threads.py` - `/api/threads/{id}` - Local DeerFlow thread data cleanup after LangGraph deletion
+**Routers** (all under `/api/`):
+- `agents.py` - `/api/agents` - Agent configuration and management
+- `assistants_compat.py` - `/api/assistants` - OpenAI Assistants API compatibility
 - `artifacts.py` - `/api/threads/{id}/artifacts` - Artifact serving
+- `auth.py` - `/api/auth` - Authentication
+- `channels.py` - `/api/channels` - IM channel status and control
+- `feedback.py` - `/api/threads/{id}/runs/{run_id}/feedback` - Feedback management
+- `mcp.py` - `/api/mcp` - MCP server configuration
+- `memory.py` - `/api/memory` - Memory system
+- `models.py` - `/api/models` - Model listing and details
+- `runs.py` - `/api/runs` - Stateless run operations
+- `skills.py` - `/api/skills` - Skills management
 - `suggestions.py` - `/api/threads/{id}/suggestions` - Follow-up suggestion generation
+- `thread_runs.py` - `/api/threads/{id}/runs` - Thread-scoped runs
+- `threads.py` - `/api/threads/{id}` - Thread management and cleanup
+- `uploads.py` - `/api/threads/{id}/uploads` - File upload
 
 The web conversation delete flow is now split across both backend surfaces: LangGraph handles `DELETE /api/langgraph/threads/{thread_id}` for thread state, then the Gateway `threads.py` router removes DeerFlow-managed filesystem data via `Paths.delete_thread_dir()`.
 
 ### Agent Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           make_lead_agent(config)                        │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            Middleware Chain                              │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ 1. ThreadDataMiddleware  - Initialize workspace/uploads/outputs  │   │
-│  │ 2. UploadsMiddleware     - Process uploaded files               │   │
-│  │ 3. SandboxMiddleware     - Acquire sandbox environment          │   │
-│  │ 4. SummarizationMiddleware - Context reduction (if enabled)     │   │
-│  │ 5. TitleMiddleware       - Auto-generate titles                 │   │
-│  │ 6. TodoListMiddleware    - Task tracking (if plan_mode)         │   │
-│  │ 7. ViewImageMiddleware   - Vision model support                 │   │
-│  │ 8. ClarificationMiddleware - Handle clarifications              │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              Agent Core                                  │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐   │
-│  │      Model       │  │      Tools       │  │    System Prompt     │   │
-│  │  (from factory)  │  │  (configured +   │  │  (with skills)       │   │
-│  │                  │  │   MCP + builtin) │  │                      │   │
-│  └──────────────────┘  └──────────────────┘  └──────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+The middleware chain has 20 middlewares in two groups:
+
+**Base middlewares** (`build_lead_runtime_middlewares`):
+1. ThreadDataMiddleware - Create per-thread directories
+2. UploadsMiddleware - Track and inject uploaded files
+3. SandboxMiddleware - Acquire sandbox
+4. DanglingToolCallMiddleware - Inject missing ToolMessages
+5. LLMErrorHandlingMiddleware - Normalize provider errors
+6. GuardrailMiddleware - Pre-tool-call authorization (optional)
+7. SandboxAuditMiddleware - Audit sandbox operations
+8. ToolErrorHandlingMiddleware - Convert tool exceptions
+
+**Lead-agent middlewares** (`_build_middlewares`, appended after base):
+9. DynamicContextMiddleware - Inject date/memory for prefix-cache
+10. DeerFlowSummarizationMiddleware - Context reduction (optional)
+11. TodoMiddleware - Task tracking with write_todos (optional)
+12. TokenUsageMiddleware - Record token metrics (optional)
+13. TitleMiddleware - Auto-generate thread title
+14. MemoryMiddleware - Queue async memory update
+15. ViewImageMiddleware - Inject base64 images (optional, vision models)
+16. DeferredToolFilterMiddleware - Hide deferred tools (optional)
+17. SubagentLimitMiddleware - Enforce MAX_CONCURRENT_SUBAGENTS
+18. LoopDetectionMiddleware - Detect and break tool loops
+19. Custom middlewares - User-injected middlewares
+20. ClarificationMiddleware - Intercept ask_clarification (last)
+
+See [middleware-execution-flow.md](middleware-execution-flow.md) for detailed execution order.
 
 ### Thread State
 
@@ -353,21 +357,12 @@ SKILL.md Format:
    POST /api/langgraph/threads/{thread_id}/runs
    {"input": {"messages": [{"role": "user", "content": "Hello"}]}}
 
-2. Nginx → LangGraph Server (2024)
-   Proxied to LangGraph server
+2. Nginx → Gateway API
+   Proxied to Gateway's embedded agent runtime
 
-3. LangGraph Server
+3. Gateway Agent Runtime
    a. Load/create thread state
-   b. Execute middleware chain:
-      - ThreadDataMiddleware: Set up paths
-      - UploadsMiddleware: Inject file list
-      - SandboxMiddleware: Acquire sandbox
-      - SummarizationMiddleware: Check token limits
-      - TitleMiddleware: Generate title if needed
-      - TodoListMiddleware: Load todos (if plan mode)
-      - ViewImageMiddleware: Process images
-      - ClarificationMiddleware: Check for clarifications
-
+   b. Execute middleware chain (20 middlewares, see Agent Architecture section)
    c. Execute agent:
       - Model processes messages
       - May call tools (bash, web_search, etc.)

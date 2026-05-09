@@ -101,16 +101,18 @@ structured_memory/
 - 相关任务: [2026-Q1 销售分析](../../../tasks/2026/2026-Q1-sales-analysis.md)
 ```
 
-## Built-in Tools (6 个)
+## Built-in Tools (8 个)
 
 | 工具 | 签名 | 用途 |
 |------|------|------|
 | `search_structured_memory` | `(query: str, category: "facts"\|"tasks"\|"all" = "all") -> str` | 全文搜索记忆内容，返回匹配文件路径和摘要 |
 | `get_memory_entity` | `(path: str) -> str` | 读取指定实体文件完整内容，path 为相对路径 |
 | `list_memory_entities` | `(path: str = "", depth: int = 2) -> str` | 浏览目录结构，默认展示 2 层 |
-| `write_memory_entity` | `(path: str, content: str) -> str` | 创建或覆写实体文件，原子写入 |
-| `delete_memory_entity` | `(path: str) -> str` | 删除实体文件 |
+| `create_memory_entity` | `(path: str, content: str) -> str` | 创建新实体文件，原子写入 |
+| `update_memory_entity` | `(path: str, content: str, partial: bool = true) -> str` | 部分更新实体文件（解析 → 修改 → 重新序列化），自动更新索引 |
+| `delete_memory_entity` | `(path: str) -> str` | 删除实体文件，自动取消注册 |
 | `update_memory_index` | `(index_path: str, action: "add"\|"remove"\|"update", entry: str, target: str = "") -> str` | 安全更新索引文件 |
+| `update_core_memory` | `(content: str) -> str` | 更新 core.md 核心记忆摘要 |
 
 **路径约定**: 所有工具接受相对路径（如 `facts/schema/tables/ods_order.md`），底层自动映射到 `{base_dir}/structured_memory/`。agent 不需要知道绝对路径。
 
