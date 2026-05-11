@@ -477,11 +477,6 @@ When using `make dev` from root, the frontend automatically connects through ngi
 ## Key Features
 
 **File Upload**: Multi-file upload with automatic PDF/PPT/Excel/Word conversion. See [docs/FILE_UPLOAD.md](docs/FILE_UPLOAD.md).
-
-<<<<<<< HEAD
-**Plan Mode**: TodoList middleware for complex multi-step tasks via `write_todos` tool. See [docs/plan_mode_usage.md](docs/plan_mode_usage.md).
-=======
-Multi-file upload with automatic document conversion:
 - Endpoint: `POST /api/threads/{thread_id}/uploads`
 - Supports: PDF, PPT, Excel, Word documents (converted via `markitdown`)
 - Rejects directory inputs before copying so uploads stay all-or-nothing
@@ -489,7 +484,8 @@ Multi-file upload with automatic document conversion:
 - Files stored in thread-isolated directories
 - Duplicate filenames in a single upload request are auto-renamed with `_N` suffixes so later files do not truncate earlier files
 - Agent receives uploaded file list via `UploadsMiddleware`
->>>>>>> upstream/main
+
+**Plan Mode**: TodoList middleware for complex multi-step tasks via `write_todos` tool. See [docs/plan_mode_usage.md](docs/plan_mode_usage.md).
 
 **Context Summarization**: Automatic conversation summarization when approaching token limits. See [docs/summarization.md](docs/summarization.md).
 
