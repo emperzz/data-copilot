@@ -233,7 +233,7 @@ FastAPI application on port 8001 with health check at `GET /health`. Set `GATEWA
 - `bash` - Execute commands with path translation and error handling
 - `ls` - Directory listing (tree format, max 2 levels)
 - `read_file` - Read file contents with optional line range
-- `write_file` - Write/append to files, creates directories
+- `write_file` - Write/append to files, creates directories; overwrites by default and exposes the `append` argument in the model-facing schema for end-of-file writes
 - `str_replace` - Substring replacement (single or all occurrences); same-path serialization is scoped to `(sandbox.id, path)` so isolated sandboxes do not contend on identical virtual paths inside one process
 
 ### Subagent System (`packages/harness/deerflow/subagents/`)
@@ -478,7 +478,18 @@ When using `make dev` from root, the frontend automatically connects through ngi
 
 **File Upload**: Multi-file upload with automatic PDF/PPT/Excel/Word conversion. See [docs/FILE_UPLOAD.md](docs/FILE_UPLOAD.md).
 
+<<<<<<< HEAD
 **Plan Mode**: TodoList middleware for complex multi-step tasks via `write_todos` tool. See [docs/plan_mode_usage.md](docs/plan_mode_usage.md).
+=======
+Multi-file upload with automatic document conversion:
+- Endpoint: `POST /api/threads/{thread_id}/uploads`
+- Supports: PDF, PPT, Excel, Word documents (converted via `markitdown`)
+- Rejects directory inputs before copying so uploads stay all-or-nothing
+- Reuses one conversion worker per request when called from an active event loop
+- Files stored in thread-isolated directories
+- Duplicate filenames in a single upload request are auto-renamed with `_N` suffixes so later files do not truncate earlier files
+- Agent receives uploaded file list via `UploadsMiddleware`
+>>>>>>> upstream/main
 
 **Context Summarization**: Automatic conversation summarization when approaching token limits. See [docs/summarization.md](docs/summarization.md).
 
