@@ -14,9 +14,9 @@ This document provides a comprehensive overview of the DeerFlow backend architec
 │                          Nginx (Port 2026)                               │
 │                    Unified Reverse Proxy Entry Point                      │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │  /api/langgraph/*  →  Gateway API (8001, embedded runtime)         │  │
-│  │  /api/*            →  Gateway API (8001)                           │  │
-│  │  /*                →  Frontend (3000)                              │  │
+│  │  /api/langgraph/*  →  Gateway LangGraph-compatible runtime (8001)  │  │
+│  │  /api/*            →  Gateway REST APIs (8001)                     │  │
+│  │  /*                →  Frontend (3000)                               │  │
 │  └────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────┬────────────────────────────────────────┘
                                   │
@@ -24,8 +24,8 @@ This document provides a comprehensive overview of the DeerFlow backend architec
           │                       │                       │
           ▼                       ▼                       ▼
 ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
-│   Gateway API       │ │    Gateway API      │ │     Frontend        │
-│    (Port 8001)       │ │    (Port 8001)       │ │    (Port 3000)      │
+│ Embedded Runtime    │ │    Gateway API      │ │     Frontend        │
+│  (inside Gateway)   │ │    (Port 8001)      │ │    (Port 3000)      │
 │                     │ │                     │ │                     │
 │  - Agent Runtime    │ │  - Models API       │ │  - Next.js App      │
 │  - Thread Mgmt      │ │  - MCP Config       │ │  - React UI         │
@@ -51,9 +51,9 @@ This document provides a comprehensive overview of the DeerFlow backend architec
 
 ## Component Details
 
-### Agent Runtime (embedded in Gateway API)
+### Embedded LangGraph Runtime
 
-The agent runtime is the core DeerFlow agent, built on LangGraph for robust multi-agent workflow orchestration. It runs inside the Gateway API process (not as a separate server).
+The LangGraph-compatible runtime runs inside the Gateway process and is built on LangGraph for robust multi-agent workflow orchestration.
 
 **Entry Point**: `packages/harness/deerflow/agents/lead_agent/agent.py:make_lead_agent`
 
@@ -77,7 +77,7 @@ The agent runtime is the core DeerFlow agent, built on LangGraph for robust mult
 
 ### Gateway API
 
-FastAPI application providing REST endpoints for non-agent operations.
+FastAPI application providing REST endpoints plus the public LangGraph-compatible `/api/langgraph/*` runtime routes.
 
 **Entry Point**: `app/gateway/app.py`
 
@@ -357,10 +357,10 @@ SKILL.md Format:
    POST /api/langgraph/threads/{thread_id}/runs
    {"input": {"messages": [{"role": "user", "content": "Hello"}]}}
 
-2. Nginx → Gateway API
-   Proxied to Gateway's embedded agent runtime
+2. Nginx → Gateway API (8001)
+   Routes `/api/langgraph/*` to the Gateway's LangGraph-compatible runtime
 
-3. Gateway Agent Runtime
+3. Embedded LangGraph runtime
    a. Load/create thread state
    b. Execute middleware chain (20 middlewares, see Agent Architecture section)
    c. Execute agent:
