@@ -161,6 +161,8 @@ services:
         read_only: true
         bind:
           create_host_path: true
+      # Custom mount for D:/sql - maps Windows D:\sql to container /mnt/d/sql
+      - /mnt/d/sql:/mnt/d/sql:ro
     working_dir: /app
     environment:
       - CI=true
