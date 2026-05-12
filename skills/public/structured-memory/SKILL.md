@@ -280,6 +280,125 @@ Each index also has a `*最后更新: {last_updated}*` footer. Do not edit index
 3. Use `get_memory_entity` to load full details when needed
 4. Use `list_memory_entities` to browse when exploring
 
+## Multi-File Processing Strategy
+
+When processing a large number of files (more than 10), use **subagents with serial execution** to avoid context explosion and tool frequency limits.
+
+### Key Principle: Subagent Segmentation
+
+**DO**: Use multiple subagents, each responsible for a small batch of files. Execute them **serially** (one after another).
+
+**DON'T**: Have a single agent try to process all files at once, or launch multiple subagents in parallel for the same task.
+
+### When This Applies
+
+- Processing more than 10 files in a single task
+- Exploring or cataloging an entire directory
+- Any task that would require more than 20 tool calls
+
+### Why Parallel Subagents Fail
+
+Launching multiple subagents in parallel (e.g., one for `user_a/`, one for `team_b/`, one for `team_b/reports/`) can cause:
+
+1. **Subagent failures**: If one fails, you lose its results and may not know which files were processed
+2. **Context explosion**: Each subagent consumes significant tokens in the parent context
+3. **Race conditions**: All subagents completing simultaneously can overwhelm the context window
+4. **Debugging difficulty**: Hard to track which files were processed if something goes wrong
+
+### Correct Workflow: Serial Subagent Chaining
+
+When the user asks to process N files, the lead agent should:
+
+**Step 1: Explore and Plan**
+- List all files to process using `ls` or `glob`
+- Divide files into logical groups (e.g., by directory, or 5-8 files per group)
+- Create a todo list showing the plan
+
+**Step 2: Launch First Subagent**
+- Use `task` tool with a specific, bounded prompt
+- Example: "Read files file1.sh, file2.sh, file3.sh from /mnt/sql/dw/, analyze each SQL script, and create memory entities for the tables found"
+
+**Step 3: Wait and Verify**
+- Wait for the subagent to complete
+- Check that memory entities were created successfully
+- Update the todo list
+
+**Step 4: Launch Next Subagent (Serial)**
+- Only after the previous subagent finishes, launch the next one
+- Continue until all file groups are processed
+
+**Step 5: Finalize**
+- Call `update_core_memory` to record the completed work
+- Mark the main todo as completed
+
+### Example: Processing Files Across 3 Directories
+
+```
+Step 1: Explore
+  - ls /mnt/data → find user_a/ (14 files), team_b/ (15 files), team_b/reports/ (7 files)
+  - Total: 36 files → plan 5 subagent tasks
+
+Step 2: Subagent 1 (files 1-7, e.g., user_a batch)
+  - task: "Read and process /mnt/data/user_a/file1.sql through /mnt/data/user_a/file7.sql"
+  - Create memory entities for tables found
+  - Result: 7 entities created
+
+Step 3: Subagent 2 (files 8-14, remaining user_a)
+  - task: "Read and process /mnt/data/user_a/file8.sql through /mnt/data/user_a/file14.sql"
+  - Result: 7 entities created
+
+Step 4: Subagent 3 (team_b/ batch 1)
+  - task: "Read and process /mnt/data/team_b/file1.sql through /mnt/data/team_b/file5.sql"
+  - Result: 5 entities created
+
+Step 5: Subagent 4 (team_b/ batch 2)
+  - task: "Read and process /mnt/data/team_b/file6.sql through /mnt/data/team_b/file10.sql"
+  - Result: 5 entities created
+
+Step 6: Subagent 5 (remaining files)
+  - task: "Read and process /mnt/data/team_b/file11.sql through /mnt/data/team_b/reports/file7.sql"
+  - Result: 7 entities created
+
+Step 7: Finalize
+  - Total: 36 memory entities created
+  - update_core_memory(...)
+```
+
+### Subagent Prompt Template
+
+When creating subagent tasks, be specific about:
+
+1. **Exactly which files** to process (not "all files in directory")
+2. **What to extract** from each file (table names, columns, upstream dependencies)
+3. **Output format**: Create memory entities immediately, don't just return raw data
+
+Example prompt:
+```
+Read and process these 5 files:
+- /mnt/data/team_b/report_user_dau_di.sql
+- /mnt/data/team_b/report_user_revenue_di.sql
+- /mnt/data/team_b/report_store_metrics_di.sql
+- /mnt/data/team_b/report_product_sales_di.sql
+- /mnt/data/team_b/dim_store_info.sql
+
+For each file:
+1. Extract the CREATE TABLE statement and table name
+2. Identify the table's purpose and core logic
+3. List the key columns (name + description)
+4. Identify upstream dependencies from the SQL
+5. Create a memory entity using create_memory_entity tool
+
+Report when all 5 entities are created.
+```
+
+### Why Serial Execution Works
+
+- **Controlled context**: Each subagent has bounded context size
+- **Fault isolation**: If one subagent fails, only that batch is affected
+- **Progress visibility**: Clear tracking of which batches are complete
+- **No resource spikes**: Avoids overwhelming the system with parallel work
+- **Retry friendly**: Failed batches can be retried without re-processing successful ones
+
 ## Classification Guide
 
 | Information Type | Goes To |
